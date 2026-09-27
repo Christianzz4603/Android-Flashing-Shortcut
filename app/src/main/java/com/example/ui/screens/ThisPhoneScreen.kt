@@ -103,8 +103,8 @@ enum class HostPrimaryCategory(val label: String) {
 }
 
 @Composable
-fun ThisPhoneScreen(viewModel: AfsViewModel) {
-    var selectedCategory by remember { mutableStateOf(HostPrimaryCategory.ADB_TOOLS) }
+fun ThisPhoneScreen(viewModel: AfsViewModel, initialCategory: HostPrimaryCategory = HostPrimaryCategory.ADB_TOOLS) {
+    var selectedCategory by remember { mutableStateOf(initialCategory) }
     val hostInfo by viewModel.hostDeviceInfo.collectAsState()
     val isRoot by viewModel.isRootAvailable.collectAsState()
     val isAdb by viewModel.isAdbAvailable.collectAsState()
@@ -114,7 +114,6 @@ fun ThisPhoneScreen(viewModel: AfsViewModel) {
             .fillMaxSize()
             .background(AfsSurface)
     ) {
-        // Category Pills (inspired directly by the AFS reference interface)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -164,7 +163,6 @@ fun ThisPhoneScreen(viewModel: AfsViewModel) {
             )
         }
 
-        // Active Tool Section Content
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -181,10 +179,6 @@ fun ThisPhoneScreen(viewModel: AfsViewModel) {
     }
 }
 
-/**
- * Clean, lightweight ADB Tools pane matching the screenshot reference:
- * Command input, RUN button, reboot selector & execute, quick presets, and embedded LOGS window.
- */
 @Composable
 private fun HostAdbToolsSection(viewModel: AfsViewModel, isRoot: Boolean) {
     val context = LocalContext.current
@@ -195,7 +189,6 @@ private fun HostAdbToolsSection(viewModel: AfsViewModel, isRoot: Boolean) {
 
     val lastResult by viewModel.lastCommandResult.collectAsState()
 
-    // Sync last command result directly to terminal logs
     androidx.compose.runtime.LaunchedEffect(lastResult) {
         lastResult?.let { res ->
             val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(res.timestamp))
@@ -214,7 +207,6 @@ private fun HostAdbToolsSection(viewModel: AfsViewModel, isRoot: Boolean) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = PaddingValues(vertical = 4.dp)
     ) {
-        // 1. Command Input Bar with RUN Button
         item {
             Surface(
                 shape = RoundedCornerShape(10.dp),
@@ -293,7 +285,6 @@ private fun HostAdbToolsSection(viewModel: AfsViewModel, isRoot: Boolean) {
             }
         }
 
-        // 2. Reboot & System Controls (styled like the AFS reference screenshot)
         item {
             Surface(
                 shape = RoundedCornerShape(10.dp),
@@ -336,7 +327,6 @@ private fun HostAdbToolsSection(viewModel: AfsViewModel, isRoot: Boolean) {
 
                     Spacer(modifier = Modifier.height(6.dp))
 
-                    // Reboot selector options
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -409,7 +399,6 @@ private fun HostAdbToolsSection(viewModel: AfsViewModel, isRoot: Boolean) {
             }
         }
 
-        // 3. Quick Preset Commands
         item {
             Column {
                 Text(
@@ -454,7 +443,6 @@ private fun HostAdbToolsSection(viewModel: AfsViewModel, isRoot: Boolean) {
             }
         }
 
-        // 4. Dedicated LOGS window matching the AFS screenshot
         item {
             TerminalLogView(
                 title = "LOGS:",
@@ -475,9 +463,6 @@ private fun HostAdbToolsSection(viewModel: AfsViewModel, isRoot: Boolean) {
     }
 }
 
-/**
- * Clean, lightweight App Management Section.
- */
 @Composable
 private fun HostAppManagementSection(viewModel: AfsViewModel) {
     val context = LocalContext.current
@@ -495,7 +480,6 @@ private fun HostAppManagementSection(viewModel: AfsViewModel) {
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // App search & toggle row
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -604,12 +588,10 @@ private fun AppRowCard(app: AppInfoItem, isRoot: Boolean, viewModel: AfsViewMode
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            // Action Buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                // Launch
                 OutlinedButton(
                     onClick = {
                         val launchIntent = context.packageManager.getLaunchIntentForPackage(app.packageName)
@@ -625,7 +607,6 @@ private fun AppRowCard(app: AppInfoItem, isRoot: Boolean, viewModel: AfsViewMode
                     Text("Launch", fontSize = 10.sp, color = AfsCyan)
                 }
 
-                // Force Stop
                 OutlinedButton(
                     onClick = {
                         val cmd = "am force-stop ${app.packageName}"
@@ -638,7 +619,6 @@ private fun AppRowCard(app: AppInfoItem, isRoot: Boolean, viewModel: AfsViewMode
                     Text("Stop", fontSize = 10.sp, color = AfsAmber)
                 }
 
-                // Clear Data
                 OutlinedButton(
                     onClick = {
                         viewModel.runCommand(
@@ -663,7 +643,6 @@ private fun AppRowCard(app: AppInfoItem, isRoot: Boolean, viewModel: AfsViewMode
                     Text("Clear", fontSize = 10.sp, color = AfsRed)
                 }
 
-                // Uninstall
                 OutlinedButton(
                     onClick = {
                         val intent = Intent(Intent.ACTION_UNINSTALL_PACKAGE).apply {
@@ -682,9 +661,6 @@ private fun AppRowCard(app: AppInfoItem, isRoot: Boolean, viewModel: AfsViewMode
     }
 }
 
-/**
- * Clean, lightweight File Tools pane.
- */
 @Composable
 private fun HostFileToolsSection(viewModel: AfsViewModel) {
     val context = LocalContext.current
@@ -695,7 +671,6 @@ private fun HostFileToolsSection(viewModel: AfsViewModel) {
     var newFolderName by remember { mutableStateOf("") }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Path navigation bar
         Surface(
             shape = RoundedCornerShape(8.dp),
             color = AfsSurfaceContainer,
@@ -736,7 +711,6 @@ private fun HostFileToolsSection(viewModel: AfsViewModel) {
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Files list
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(4.dp),
             contentPadding = PaddingValues(vertical = 4.dp),
@@ -821,9 +795,6 @@ private fun HostFileToolsSection(viewModel: AfsViewModel) {
     }
 }
 
-/**
- * Clean Device Info pane showing concise hardware & OS metrics.
- */
 @Composable
 private fun HostDeviceInfoSection(info: HostDeviceInfo?) {
     if (info == null) {
@@ -865,9 +836,6 @@ private fun HostDeviceInfoSection(info: HostDeviceInfo?) {
     }
 }
 
-/**
- * Clean Processes pane showing active processes with kill capability.
- */
 @Composable
 private fun HostProcessesSection(viewModel: AfsViewModel) {
     val processes by viewModel.processItems.collectAsState()

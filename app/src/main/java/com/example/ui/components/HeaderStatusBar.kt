@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
@@ -50,6 +51,7 @@ fun HeaderStatusBar(
     targetConnected: Boolean,
     targetTransport: String,
     onRefresh: () -> Unit,
+    onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -63,13 +65,27 @@ fun HeaderStatusBar(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
-            // App Branding Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (onBack != null) {
+                        IconButton(
+                            onClick = onBack,
+                            modifier = Modifier
+                                .size(32.dp)
+                                .testTag("header_back_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ArrowBack,
+                                contentDescription = "Back to menu",
+                                tint = AfsCyan
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
                     Box(
                         modifier = Modifier
                             .size(32.dp)
@@ -95,7 +111,7 @@ fun HeaderStatusBar(
                             letterSpacing = 0.2.sp
                         )
                         Text(
-                            text = "AFS v1.0.0 • Desktop-Utility Mode",
+                            text = "AFS v1.0.0 \u2022 Desktop-Utility Mode",
                             fontSize = 11.sp,
                             color = AfsTextSecondary,
                             fontFamily = FontFamily.Monospace
@@ -118,7 +134,6 @@ fun HeaderStatusBar(
 
             Spacer(modifier = Modifier.padding(top = 8.dp))
 
-            // Status indicators row (Inspired by AFS / Bugjaeger header)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

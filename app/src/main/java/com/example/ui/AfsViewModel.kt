@@ -32,10 +32,13 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 enum class MainTab(val label: String, val icon: String) {
-    THIS_PHONE("This Phone", "📱"),
-    ANOTHER_PHONE("Another Phone", "📲"),
-    SETTINGS("Settings", "⚙"),
-    ABOUT("About", "ℹ")
+    HOME("Home", "\uD83C\uDFE0"),
+    THIS_PHONE("ADB Tools", "\uD83D\uDCF1"),
+    ANOTHER_PHONE("Fastboot Tools", "\uD83D\uDCF2"),
+    APP_MANAGEMENT("App Management", "\uD83E\uDDE9"),
+    SETTINGS("Settings", "\u2699"),
+    ABOUT("About", "\u2139"),
+    UPDATES("Updates", "\uD83D\uDD04")
 }
 
 data class DestructiveAction(
@@ -60,7 +63,7 @@ class AfsViewModel(application: Application) : AndroidViewModel(application) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Current navigation tab
-    private val _currentTab = MutableStateFlow(MainTab.THIS_PHONE)
+    private val _currentTab = MutableStateFlow(MainTab.HOME)
     val currentTab: StateFlow<MainTab> = _currentTab.asStateFlow()
 
     // Host telemetry
@@ -254,7 +257,6 @@ class AfsViewModel(application: Application) : AndroidViewModel(application) {
                 val dev = devices.first()
                 backendRegistry.targetAdb.connectUsbOtg(dev)
             } else {
-                // If in emulator or no physical OTG connected, provide user feedback or simulated test link
                 backendRegistry.targetAdb.updateTargetState {
                     it.copy(
                         isConnected = true,
@@ -325,7 +327,6 @@ class AfsViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun seedDefaultShortcutsIfEmpty() {
         viewModelScope.launch {
-            // Add helpful default shortcuts for quick access
             val defaults = listOf(
                 ShortcutEntity(title = "Reboot to System", command = "reboot", targetType = "HOST", backend = "LOCAL_SHELL", category = "Reboot"),
                 ShortcutEntity(title = "Reboot to Recovery", command = "reboot recovery", targetType = "HOST", backend = "ROOT", category = "Reboot", isDestructive = true),
