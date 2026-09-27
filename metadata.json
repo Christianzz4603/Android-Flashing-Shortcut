@@ -1,0 +1,6 @@
+{
+  "name": "Android Flashing Shortcuts",
+  "description": "Lightweight GUI utility inspired by AFS and Bugjaeger for local host device management, Shizuku, root, and cross-device OTG/Remote target phone ADB, fastboot, and flashing workflows.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
