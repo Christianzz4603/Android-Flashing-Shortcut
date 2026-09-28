@@ -105,6 +105,14 @@ private fun fieldColors(accent: Color) = TextFieldDefaults.colors(
     unfocusedIndicatorColor = AfsOutline
 )
 
+private fun splitHostPort(input: String, defaultPort: Int): Pair<String, Int>? {
+    val parts = input.trim().split(":", limit = 2)
+    val host = parts.getOrNull(0)?.trim().orEmpty()
+    if (host.isBlank()) return null
+    val port = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: defaultPort
+    return host to port
+}
+
 @Composable
 fun AnotherPhoneScreen(
     viewModel: AfsViewModel,
@@ -117,9 +125,11 @@ fun AnotherPhoneScreen(
     val hostInfo by viewModel.hostDeviceInfo.collectAsState()
 
     var showWirelessDialog by remember { mutableStateOf(false) }
-    var connecting by remember { mutableStateOf(false) }
-    var targetIpInput by remember { mutableStateOf("") }
-    var targetPortInput by remember { mutableStateOf("5555") }
+    var pairHostPort by remember { mutableStateOf("") }
+    var pairCode by remember { mutableStateOf("") }
+    var manualHostPort by remember { mutableStateOf("") }
+    var pairing by remember { mutableStateOf(false) }
+    var starting by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -166,13 +176,27 @@ fun AnotherPhoneScreen(
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
-                            .background(if (targetState.isConnected) AfsGreen.copy(alpha = 0.2f) else AfsRed.copy(alpha = 0.2f))
+                            .background(
+                                when {
+                                    targetState.isConnected -> AfsGreen.copy(alpha = 0.2f)
+                                    targetState.isReconnecting -> AfsAmber.copy(alpha = 0.2f)
+                                    else -> AfsRed.copy(alpha = 0.2f)
+                                }
+                            )
                             .padding(horizontal = 5.dp, vertical = 1.dp)
                     ) {
                         Text(
-                            text = if (targetState.isConnected) "Connected (${targetState.transport.label})" else "Disconnected",
+                            text = when {
+                                targetState.isConnected -> "Connected (${targetState.transport.label})"
+                                targetState.isReconnecting -> "Reconnecting (Wi-Fi changed)..."
+                                else -> "Disconnected"
+                            },
                             fontSize = 9.sp,
-                            color = if (targetState.isConnected) AfsGreen else AfsRed,
+                            color = when {
+                                targetState.isConnected -> AfsGreen
+                                targetState.isReconnecting -> AfsAmber
+                                else -> AfsRed
+                            },
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
                         )
@@ -208,7 +232,7 @@ fun AnotherPhoneScreen(
                     ) {
                         Icon(Icons.Default.Wifi, contentDescription = null, tint = AfsCyan, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Wireless ADB", fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        Text("Wireless debugging", fontSize = 11.sp, fontWeight = FontWeight.Medium)
                     }
 
                     if (targetState.isConnected) {
@@ -287,58 +311,123 @@ fun AnotherPhoneScreen(
 
     if (showWirelessDialog) {
         AlertDialog(
-            onDismissRequest = { if (!connecting) showWirelessDialog = false },
-            title = { Text("Wireless ADB Connection", color = AfsTextPrimary, fontSize = 14.sp) },
+            onDismissRequest = { if (!pairing && !starting) showWirelessDialog = false },
+            title = { Text("Wireless debugging", color = AfsTextPrimary, fontSize = 14.sp) },
             text = {
                 Column {
                     Text(
-                        text = "The target must be listening for plain ADB over TCP (run 'adb tcpip 5555' once over USB). " +
-                            "After connecting, tap Allow on the target phone. Android 11+ 'Wireless debugging' with pairing codes is not supported.",
+                        "Works like Shizuku: pair once with the code from the target's Wireless debugging screen, " +
+                            "then just tap Start every time after that - even after switching Wi-Fi networks.",
                         fontSize = 11.sp,
                         color = AfsTextSecondary
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("1. PAIR NEW DEVICE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = AfsCyan, fontFamily = FontFamily.Monospace)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "On the target: Settings > Developer options > Wireless debugging > Pair device with pairing code.",
+                        fontSize = 10.sp, color = AfsTextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
                     OutlinedTextField(
-                        value = targetIpInput,
-                        onValueChange = { targetIpInput = it },
-                        label = { Text("Target IP address") },
-                        placeholder = { Text("e.g. 192.168.1.42") },
+                        value = pairHostPort,
+                        onValueChange = { pairHostPort = it },
+                        label = { Text("Pairing IP:port") },
+                        placeholder = { Text("e.g. 192.168.1.42:37451") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     OutlinedTextField(
-                        value = targetPortInput,
-                        onValueChange = { targetPortInput = it },
-                        label = { Text("Port (usually 5555)") },
+                        value = pairCode,
+                        onValueChange = { pairCode = it },
+                        label = { Text("6-digit pairing code") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Button(
+                        enabled = !pairing && !starting && pairCode.isNotBlank() && splitHostPort(pairHostPort, 0) != null,
+                        onClick = {
+                            val hp = splitHostPort(pairHostPort, 0) ?: return@Button
+                            pairing = true
+                            viewModel.pairWirelessTarget(hp.first, hp.second, pairCode.trim()) { _, msg ->
+                                pairing = false
+                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = AfsCyan),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (pairing) "Pairing..." else "Pair", color = AfsSurface, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("2. START", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = AfsGreen, fontFamily = FontFamily.Monospace)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Already paired? Make sure Wireless debugging is toggled on, then just tap Start - " +
+                            "it finds the target automatically on this Wi-Fi network.",
+                        fontSize = 10.sp, color = AfsTextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Button(
+                        enabled = !starting && !pairing,
+                        onClick = {
+                            starting = true
+                            viewModel.startWirelessTarget { ok, msg ->
+                                starting = false
+                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                if (ok) showWirelessDialog = false
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = AfsGreen),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (starting) "Starting..." else "Start", color = AfsSurface, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("ADVANCED: MANUAL adb tcpip", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = AfsTextSecondary, fontFamily = FontFamily.Monospace)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "For older Android or a rooted target already listening on plain TCP (adb tcpip 5555), skip pairing.",
+                        fontSize = 10.sp, color = AfsTextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = manualHostPort,
+                        onValueChange = { manualHostPort = it },
+                        label = { Text("IP:port (default 5555)") },
+                        placeholder = { Text("e.g. 192.168.1.42:5555") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    OutlinedButton(
+                        enabled = !starting && !pairing && splitHostPort(manualHostPort, 5555) != null,
+                        onClick = {
+                            val hp = splitHostPort(manualHostPort, 5555) ?: return@OutlinedButton
+                            starting = true
+                            viewModel.startWirelessTarget(hp.first, hp.second) { ok, msg ->
+                                starting = false
+                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                if (ok) showWirelessDialog = false
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Connect manually", color = AfsCyan, fontSize = 12.sp)
+                    }
                 }
             },
             confirmButton = {
-                Button(
-                    enabled = !connecting && targetIpInput.isNotBlank(),
-                    onClick = {
-                        val port = targetPortInput.toIntOrNull() ?: 5555
-                        connecting = true
-                        Toast.makeText(context, "Connecting... tap Allow on the target phone if prompted", Toast.LENGTH_LONG).show()
-                        viewModel.connectWirelessTarget(targetIpInput, port) { success, msg ->
-                            connecting = false
-                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                            if (success) showWirelessDialog = false
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = AfsCyan)
-                ) {
-                    Text(if (connecting) "Connecting..." else "Connect", color = AfsSurface)
+                OutlinedButton(enabled = !pairing && !starting, onClick = { showWirelessDialog = false }) {
+                    Text("Close")
                 }
             },
-            dismissButton = {
-                OutlinedButton(enabled = !connecting, onClick = { showWirelessDialog = false }) {
-                    Text("Cancel")
-                }
-            }
+            dismissButton = {}
         )
     }
 }
@@ -809,7 +898,7 @@ private fun TargetAppsSection(viewModel: AfsViewModel) {
 
         if (packages.isEmpty()) {
             Text(
-                "Connect a target over Wireless ADB, then tap User apps to read its installed packages.",
+                "Connect a target over Wireless debugging, then tap User apps to read its installed packages.",
                 fontSize = 12.sp, color = AfsTextSecondary, modifier = Modifier.padding(8.dp)
             )
         }
