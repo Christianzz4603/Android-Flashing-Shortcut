@@ -3,10 +3,12 @@ package com.example.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,11 +29,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Cable
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Upload
@@ -40,13 +43,14 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,13 +61,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.backend.BackendType
 import com.example.backend.TargetScope
+import com.example.model.TargetDeviceInfo
 import com.example.ui.AfsViewModel
 import com.example.ui.DestructiveAction
 import com.example.ui.components.AfsCategoryCard
@@ -83,22 +88,37 @@ import com.example.ui.theme.AfsTextPrimary
 import com.example.ui.theme.AfsTextSecondary
 
 enum class AnotherPhoneCategory(val label: String) {
+    FASTBOOT("Fastboot"),
     ADB_COMMANDS("ADB Commands"),
     APPS("Apps"),
     FILES("Files"),
     DEVICE_INFO("Device Info")
 }
 
+private val monoStyle = TextStyle(color = AfsTextPrimary, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+
 @Composable
-fun AnotherPhoneScreen(viewModel: AfsViewModel) {
+private fun fieldColors(accent: Color) = TextFieldDefaults.colors(
+    focusedContainerColor = AfsTerminalBg,
+    unfocusedContainerColor = AfsTerminalBg,
+    focusedIndicatorColor = accent,
+    unfocusedIndicatorColor = AfsOutline
+)
+
+@Composable
+fun AnotherPhoneScreen(
+    viewModel: AfsViewModel,
+    initialCategory: AnotherPhoneCategory = AnotherPhoneCategory.FASTBOOT
+) {
     val context = LocalContext.current
-    var selectedCategory by remember { mutableStateOf(AnotherPhoneCategory.ADB_COMMANDS) }
+    var selectedCategory by remember { mutableStateOf(initialCategory) }
     val targetState by viewModel.targetDeviceState.collectAsState()
     val targetInfo by viewModel.targetDeviceInfo.collectAsState()
     val hostInfo by viewModel.hostDeviceInfo.collectAsState()
 
     var showWirelessDialog by remember { mutableStateOf(false) }
-    var targetIpInput by remember { mutableStateOf("192.168.1.105") }
+    var connecting by remember { mutableStateOf(false) }
+    var targetIpInput by remember { mutableStateOf("") }
     var targetPortInput by remember { mutableStateOf("5555") }
 
     Column(
@@ -106,7 +126,6 @@ fun AnotherPhoneScreen(viewModel: AfsViewModel) {
             .fillMaxSize()
             .background(AfsSurface)
     ) {
-        // TOP STATUS & CONNECTION BAR: HOST vs TARGET
         Surface(
             shape = RoundedCornerShape(10.dp),
             color = AfsSurfaceContainer,
@@ -135,10 +154,10 @@ fun AnotherPhoneScreen(viewModel: AfsViewModel) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                         Text("TARGET: ", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = AfsAmber, fontWeight = FontWeight.Bold)
                         Text(
-                            text = if (targetState.isConnected) targetInfo.model else "Another Phone (Disconnected)",
+                            text = if (targetState.isConnected) targetState.model else "Another Phone (Disconnected)",
                             fontSize = 11.sp,
                             color = if (targetState.isConnected) AfsTextPrimary else AfsTextSecondary,
                             fontWeight = FontWeight.SemiBold
@@ -162,15 +181,14 @@ fun AnotherPhoneScreen(viewModel: AfsViewModel) {
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Connection Buttons (USB OTG & Wireless ADB)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Button(
                         onClick = {
-                            viewModel.scanUsbOtgTargets()
-                            Toast.makeText(context, "Scanning USB OTG ports...", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Scanning USB ports...", Toast.LENGTH_SHORT).show()
+                            viewModel.scanUsbOtgTargets { msg -> Toast.makeText(context, msg, Toast.LENGTH_LONG).show() }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = AfsCyan),
                         modifier = Modifier.weight(1f).height(32.dp),
@@ -208,7 +226,6 @@ fun AnotherPhoneScreen(viewModel: AfsViewModel) {
             }
         }
 
-        // Category Pills (Same compact AFS utility style)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -216,6 +233,13 @@ fun AnotherPhoneScreen(viewModel: AfsViewModel) {
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            AfsCategoryCard(
+                title = "Fastboot",
+                icon = Icons.Default.Build,
+                iconBgColor = Color(0xFF29B6F6),
+                isSelected = selectedCategory == AnotherPhoneCategory.FASTBOOT,
+                onClick = { selectedCategory = AnotherPhoneCategory.FASTBOOT }
+            )
             AfsCategoryCard(
                 title = "ADB Commands",
                 icon = Icons.Default.Android,
@@ -246,29 +270,30 @@ fun AnotherPhoneScreen(viewModel: AfsViewModel) {
             )
         }
 
-        // Section Content
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 12.dp)
         ) {
             when (selectedCategory) {
+                AnotherPhoneCategory.FASTBOOT -> TargetFastbootSection(viewModel)
                 AnotherPhoneCategory.ADB_COMMANDS -> TargetAdbCommandsSection(viewModel)
                 AnotherPhoneCategory.APPS -> TargetAppsSection(viewModel)
                 AnotherPhoneCategory.FILES -> TargetFilesSection(viewModel)
-                AnotherPhoneCategory.DEVICE_INFO -> TargetDeviceInfoSection(targetInfo)
+                AnotherPhoneCategory.DEVICE_INFO -> TargetDeviceInfoSection(viewModel, targetInfo)
             }
         }
     }
 
     if (showWirelessDialog) {
         AlertDialog(
-            onDismissRequest = { showWirelessDialog = false },
+            onDismissRequest = { if (!connecting) showWirelessDialog = false },
             title = { Text("Wireless ADB Connection", color = AfsTextPrimary, fontSize = 14.sp) },
             text = {
                 Column {
                     Text(
-                        text = "Enter the target device's IP address and ADB port (default 5555):",
+                        text = "The target must be listening for plain ADB over TCP (run 'adb tcpip 5555' once over USB). " +
+                            "After connecting, tap Allow on the target phone. Android 11+ 'Wireless debugging' with pairing codes is not supported.",
                         fontSize = 11.sp,
                         color = AfsTextSecondary
                     )
@@ -276,7 +301,8 @@ fun AnotherPhoneScreen(viewModel: AfsViewModel) {
                     OutlinedTextField(
                         value = targetIpInput,
                         onValueChange = { targetIpInput = it },
-                        label = { Text("Target IP Address") },
+                        label = { Text("Target IP address") },
+                        placeholder = { Text("e.g. 192.168.1.42") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -292,20 +318,24 @@ fun AnotherPhoneScreen(viewModel: AfsViewModel) {
             },
             confirmButton = {
                 Button(
+                    enabled = !connecting && targetIpInput.isNotBlank(),
                     onClick = {
                         val port = targetPortInput.toIntOrNull() ?: 5555
+                        connecting = true
+                        Toast.makeText(context, "Connecting... tap Allow on the target phone if prompted", Toast.LENGTH_LONG).show()
                         viewModel.connectWirelessTarget(targetIpInput, port) { success, msg ->
-                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                            connecting = false
+                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                             if (success) showWirelessDialog = false
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = AfsCyan)
                 ) {
-                    Text("Connect", color = AfsSurface)
+                    Text(if (connecting) "Connecting..." else "Connect", color = AfsSurface)
                 }
             },
             dismissButton = {
-                OutlinedButton(onClick = { showWirelessDialog = false }) {
+                OutlinedButton(enabled = !connecting, onClick = { showWirelessDialog = false }) {
                     Text("Cancel")
                 }
             }
@@ -313,20 +343,34 @@ fun AnotherPhoneScreen(viewModel: AfsViewModel) {
     }
 }
 
-/**
- * Target ADB Commands pane: Command input, preset actions, and terminal log window.
- */
 @Composable
-private fun TargetAdbCommandsSection(viewModel: AfsViewModel) {
-    val context = LocalContext.current
-    var commandInput by remember { mutableStateOf("") }
-    var selectedRebootTarget by remember { mutableStateOf("system") }
-    var targetLogs by remember { mutableStateOf("Ready for Target ADB commands.\n$ ") }
-    var lastSuccess by remember { mutableStateOf<Boolean?>(null) }
+private fun SectionCard(title: String, accent: Color = AfsAmber, content: @Composable () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = AfsSurfaceContainer,
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, AfsOutline, RoundedCornerShape(10.dp))
+            .padding(10.dp)
+    ) {
+        Column {
+            Text(text = title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = accent, fontFamily = FontFamily.Monospace)
+            Spacer(modifier = Modifier.height(6.dp))
+            content()
+        }
+    }
+}
 
+/** Output console fed by real results of target commands. */
+@Composable
+private fun TargetConsole(viewModel: AfsViewModel, title: String) {
+    val context = LocalContext.current
+    val initial = "Ready. Output from the target appears here.\n$ "
+    var logs by remember { mutableStateOf(initial) }
+    var success by remember { mutableStateOf<Boolean?>(null) }
     val lastResult by viewModel.lastCommandResult.collectAsState()
 
-    androidx.compose.runtime.LaunchedEffect(lastResult) {
+    LaunchedEffect(lastResult) {
         lastResult?.let { res ->
             if (res.target == TargetScope.TARGET) {
                 val output = buildString {
@@ -335,9 +379,69 @@ private fun TargetAdbCommandsSection(viewModel: AfsViewModel) {
                     if (res.stderr.isNotBlank()) append("[ERR] ").append(res.stderr).append("\n")
                     append("[Exit Code: ${res.exitCode}]\n\n")
                 }
-                targetLogs = output + targetLogs.take(2000)
-                lastSuccess = res.isSuccess
+                logs = output + logs.take(6000)
+                success = res.isSuccess
             }
+        }
+    }
+
+    TerminalLogView(
+        title = title,
+        logsText = logs,
+        isSuccess = success,
+        onCopy = {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("Target Logs", logs))
+            Toast.makeText(context, "Target logs copied", Toast.LENGTH_SHORT).show()
+        },
+        onClear = {
+            logs = initial
+            success = null
+        },
+        modifier = Modifier.padding(bottom = 12.dp)
+    )
+}
+
+/** Real fastboot over USB: getvar, reboot, slot switch, erase, and flashing an image file. */
+@Composable
+private fun TargetFastbootSection(viewModel: AfsViewModel) {
+    val context = LocalContext.current
+    val targetState by viewModel.targetDeviceState.collectAsState()
+    val flashProgress by viewModel.flashProgress.collectAsState()
+    var customCmd by remember { mutableStateOf("") }
+    var erasePartition by remember { mutableStateOf("") }
+    var flashPartition by remember { mutableStateOf("") }
+    var rebootMode by remember { mutableStateOf("system") }
+    val ready = targetState.isConnected && targetState.isFastbootMode
+
+    fun fb(cmd: String) {
+        viewModel.runCommand(cmd, TargetScope.TARGET, BackendType.TARGET_FASTBOOT)
+    }
+
+    fun fbConfirm(cmd: String, title: String, partition: String, details: String, op: String) {
+        viewModel.runCommand(
+            command = cmd,
+            target = TargetScope.TARGET,
+            backend = BackendType.TARGET_FASTBOOT,
+            isDestructive = true,
+            destructiveInfo = DestructiveAction(title, "Another Phone", partition, details, op) {
+                viewModel.runCommand(cmd, TargetScope.TARGET, BackendType.TARGET_FASTBOOT)
+            }
+        )
+    }
+
+    val flashLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        val part = flashPartition.trim()
+        if (uri != null && part.isNotEmpty()) {
+            viewModel.requestDestructiveConfirmation(
+                DestructiveAction(
+                    "Flash partition", "Another Phone", part,
+                    uri.lastPathSegment ?: "image file",
+                    "fastboot flash $part (overwrites the partition)"
+                ) {
+                    viewModel.flashFastboot(part, uri) { msg -> Toast.makeText(context, msg, Toast.LENGTH_LONG).show() }
+                }
+            )
         }
     }
 
@@ -345,160 +449,305 @@ private fun TargetAdbCommandsSection(viewModel: AfsViewModel) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = PaddingValues(vertical = 4.dp)
     ) {
-        // Command input
         item {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = AfsSurfaceContainer,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, AfsOutline, RoundedCornerShape(10.dp))
-                    .padding(10.dp)
-            ) {
-                Column {
+            SectionCard("FASTBOOT STATUS", if (ready) AfsGreen else AfsAmber) {
+                if (ready) {
                     Text(
-                        text = "TARGET ADB COMMAND",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = AfsAmber,
-                        fontFamily = FontFamily.Monospace
+                        "Fastboot device connected: ${targetState.model} (serial ${targetState.serial})",
+                        fontSize = 12.sp, color = AfsTextPrimary
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedTextField(
-                            value = commandInput,
-                            onValueChange = { commandInput = it },
-                            placeholder = { Text("e.g. pm list packages", fontSize = 12.sp, color = AfsTextSecondary) },
-                            textStyle = androidx.compose.ui.text.TextStyle(
-                                color = AfsTextPrimary,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 12.sp
-                            ),
-                            singleLine = true,
-                            colors = TextFieldDefaults.colors(
-                                focusedContainerColor = AfsTerminalBg,
-                                unfocusedContainerColor = AfsTerminalBg,
-                                focusedIndicatorColor = AfsAmber,
-                                unfocusedIndicatorColor = AfsOutline
-                            ),
-                            modifier = Modifier.weight(1f)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+                } else {
+                    Text(
+                        "No fastboot device. Boot the target into bootloader mode, connect it with a USB OTG cable, then tap USB OTG above.",
+                        fontSize = 12.sp, color = AfsTextSecondary
+                    )
+                    if (targetState.isConnected && !targetState.isFastbootMode) {
+                        Spacer(modifier = Modifier.height(8.dp))
                         Button(
                             onClick = {
-                                if (commandInput.isNotBlank()) {
-                                    viewModel.runCommand(
-                                        command = commandInput,
-                                        target = TargetScope.TARGET,
-                                        backend = BackendType.TARGET_ADB
-                                    )
-                                }
+                                viewModel.runCommand(
+                                    command = "reboot bootloader",
+                                    target = TargetScope.TARGET,
+                                    backend = BackendType.TARGET_ADB,
+                                    isDestructive = true,
+                                    destructiveInfo = DestructiveAction(
+                                        "Reboot target to bootloader", "Another Phone", "N/A", "adb reboot bootloader", "Remote reboot over ADB"
+                                    ) {
+                                        viewModel.runCommand("reboot bootloader", TargetScope.TARGET, BackendType.TARGET_ADB)
+                                    }
+                                )
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = AfsAmber)
                         ) {
-                            Text("RUN", color = AfsSurface, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text("Reboot target to bootloader (ADB)", color = AfsSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
         }
 
-        // Reboot Target Controls
         item {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = AfsSurfaceContainer,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, AfsOutline, RoundedCornerShape(10.dp))
-                    .padding(10.dp)
-            ) {
-                Column {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Remote Reboot Control", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AfsTextPrimary)
-                        Text("Risk: Low", fontSize = 11.sp, color = AfsGreen, fontFamily = FontFamily.Monospace)
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        listOf("system", "recovery", "bootloader").forEach { target ->
-                            UtilityChip(
-                                label = target.replaceFirstChar { it.uppercase() },
-                                isSelected = selectedRebootTarget == target,
-                                onClick = { selectedRebootTarget = target },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Button(
-                        onClick = {
-                            val cmd = if (selectedRebootTarget == "system") "reboot" else "reboot $selectedRebootTarget"
-                            viewModel.runCommand(
-                                command = cmd,
-                                target = TargetScope.TARGET,
-                                backend = BackendType.TARGET_ADB,
-                                isDestructive = true,
-                                destructiveInfo = DestructiveAction(
-                                    title = "Reboot Target Device",
-                                    target = "Another Phone",
-                                    partition = "N/A",
-                                    fileOrDetails = "Mode: $selectedRebootTarget",
-                                    operation = "Remote reboot over ADB"
-                                ) {
-                                    viewModel.runCommand(cmd, TargetScope.TARGET, BackendType.TARGET_ADB)
-                                }
-                            )
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = AfsAmber),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.RestartAlt, contentDescription = null, tint = AfsSurface, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Reboot Target Phone", color = AfsSurface, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    }
-                }
-            }
-        }
-
-        // Quick Preset Commands
-        item {
-            Column {
-                Text(
-                    text = "TARGET SHORTCUTS",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = AfsTextSecondary,
-                    fontFamily = FontFamily.Monospace
-                )
-                Spacer(modifier = Modifier.height(4.dp))
+            SectionCard("READ DEVICE VARIABLES", AfsCyan) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    val presets = listOf(
-                        "Target Props" to "getprop ro.product.model",
-                        "Battery Status" to "dumpsys battery",
-                        "Target Logcat" to "logcat -d -t 30",
-                        "WM Size" to "wm size",
-                        "Disk Usage" to "df -h"
+                    listOf(
+                        "All" to "getvar all",
+                        "Product" to "getvar product",
+                        "Current slot" to "getvar current-slot",
+                        "Unlocked" to "getvar unlocked",
+                        "Max download" to "getvar max-download-size",
+                        "Slot count" to "getvar slot-count",
+                        "Version" to "getvar version-bootloader"
+                    ).forEach { (label, cmd) ->
+                        UtilityChip(label = label, isSelected = false, onClick = { if (ready) fb(cmd) })
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = customCmd,
+                        onValueChange = { customCmd = it },
+                        placeholder = { Text("e.g. getvar hw-revision", fontSize = 12.sp, color = AfsTextSecondary) },
+                        textStyle = monoStyle,
+                        singleLine = true,
+                        colors = fieldColors(AfsCyan),
+                        modifier = Modifier.weight(1f)
                     )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        enabled = ready && customCmd.isNotBlank(),
+                        onClick = {
+                            val c = customCmd.trim().removePrefix("fastboot ").trim()
+                            val risky = c.startsWith("erase") || c.startsWith("oem") || c.startsWith("flashing") || c.startsWith("set_active")
+                            if (risky) fbConfirm(c, "Run fastboot command", "N/A", "fastboot $c", "Sent directly to the bootloader") else fb(c)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = AfsCyan)
+                    ) {
+                        Text("RUN", color = AfsSurface, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
 
-                    presets.forEach { (label, cmd) ->
+        item {
+            SectionCard("REBOOT") {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("system", "bootloader", "fastbootd", "recovery").forEach { mode ->
+                        UtilityChip(
+                            label = mode.replaceFirstChar { it.uppercase() },
+                            isSelected = rebootMode == mode,
+                            onClick = { rebootMode = mode },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    enabled = ready,
+                    onClick = {
+                        val cmd = when (rebootMode) {
+                            "system" -> "reboot"
+                            "fastbootd" -> "reboot fastboot"
+                            else -> "reboot $rebootMode"
+                        }
+                        fbConfirm(cmd, "Reboot target", "N/A", "fastboot $cmd", "Reboot the connected device")
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AfsAmber),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.RestartAlt, contentDescription = null, tint = AfsSurface, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Reboot target", color = AfsSurface, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            }
+        }
+
+        item {
+            SectionCard("ACTIVE SLOT (A/B DEVICES)") {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("a", "b").forEach { slot ->
+                        OutlinedButton(
+                            enabled = ready,
+                            onClick = {
+                                fbConfirm("set_active $slot", "Switch active slot", "slot $slot", "fastboot set_active $slot", "Boot from slot $slot next time")
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Set slot ${slot.uppercase()}", fontSize = 12.sp, color = AfsCyan)
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            SectionCard("ERASE PARTITION", AfsRed) {
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = erasePartition,
+                        onValueChange = { erasePartition = it },
+                        placeholder = { Text("partition, e.g. cache", fontSize = 12.sp, color = AfsTextSecondary) },
+                        textStyle = monoStyle,
+                        singleLine = true,
+                        colors = fieldColors(AfsRed),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        enabled = ready && erasePartition.isNotBlank(),
+                        onClick = {
+                            val p = erasePartition.trim()
+                            fbConfirm("erase $p", "Erase partition", p, "fastboot erase $p", "Permanently wipes the partition")
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = AfsRed)
+                    ) {
+                        Text("ERASE", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+
+        item {
+            SectionCard("FLASH IMAGE", AfsRed) {
+                OutlinedTextField(
+                    value = flashPartition,
+                    onValueChange = { flashPartition = it },
+                    placeholder = { Text("partition, e.g. boot, init_boot, recovery", fontSize = 12.sp, color = AfsTextSecondary) },
+                    textStyle = monoStyle,
+                    singleLine = true,
+                    colors = fieldColors(AfsRed),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    enabled = ready && flashPartition.isNotBlank() && flashProgress == null,
+                    onClick = { flashLauncher.launch(arrayOf("*/*")) },
+                    colors = ButtonDefaults.buttonColors(containerColor = AfsRed),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Upload, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Choose image and flash", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+                val p = flashProgress
+                if (p != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    val frac = if (p.total > 0) p.sent.toFloat() / p.total.toFloat() else 0f
+                    Text(
+                        "${p.label}: ${p.sent / 1024} / ${p.total / 1024} KB",
+                        fontSize = 11.sp, color = AfsTextSecondary, fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    LinearProgressIndicator(progress = { frac }, color = AfsCyan, modifier = Modifier.fillMaxWidth())
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    "Raw images only. Images larger than the device's max-download-size (sparse images) are rejected.",
+                    fontSize = 10.sp, color = AfsTextSecondary
+                )
+            }
+        }
+
+        item { TargetConsole(viewModel, "FASTBOOT LOGS:") }
+    }
+}
+
+/** Real shell commands on the target over the ADB session. */
+@Composable
+private fun TargetAdbCommandsSection(viewModel: AfsViewModel) {
+    var commandInput by remember { mutableStateOf("") }
+    var selectedRebootTarget by remember { mutableStateOf("system") }
+
+    LazyColumn(
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(vertical = 4.dp)
+    ) {
+        item {
+            SectionCard("TARGET ADB COMMAND") {
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = commandInput,
+                        onValueChange = { commandInput = it },
+                        placeholder = { Text("e.g. pm list packages", fontSize = 12.sp, color = AfsTextSecondary) },
+                        textStyle = monoStyle,
+                        singleLine = true,
+                        colors = fieldColors(AfsAmber),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            if (commandInput.isNotBlank()) {
+                                viewModel.runCommand(commandInput, TargetScope.TARGET, BackendType.TARGET_ADB)
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = AfsAmber)
+                    ) {
+                        Text("RUN", color = AfsSurface, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+
+        item {
+            SectionCard("REMOTE REBOOT") {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("system", "recovery", "bootloader").forEach { target ->
+                        UtilityChip(
+                            label = target.replaceFirstChar { it.uppercase() },
+                            isSelected = selectedRebootTarget == target,
+                            onClick = { selectedRebootTarget = target },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        val cmd = if (selectedRebootTarget == "system") "reboot" else "reboot $selectedRebootTarget"
+                        viewModel.runCommand(
+                            command = cmd,
+                            target = TargetScope.TARGET,
+                            backend = BackendType.TARGET_ADB,
+                            isDestructive = true,
+                            destructiveInfo = DestructiveAction(
+                                title = "Reboot Target Device",
+                                target = "Another Phone",
+                                partition = "N/A",
+                                fileOrDetails = "Mode: $selectedRebootTarget",
+                                operation = "Remote reboot over ADB"
+                            ) {
+                                viewModel.runCommand(cmd, TargetScope.TARGET, BackendType.TARGET_ADB)
+                            }
+                        )
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AfsAmber),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.RestartAlt, contentDescription = null, tint = AfsSurface, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Reboot Target Phone", color = AfsSurface, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            }
+        }
+
+        item {
+            Column {
+                Text("TARGET SHORTCUTS", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = AfsTextSecondary, fontFamily = FontFamily.Monospace)
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(
+                        "Model" to "getprop ro.product.model",
+                        "Battery" to "dumpsys battery",
+                        "Logcat" to "logcat -d -t 30",
+                        "Screen size" to "wm size",
+                        "Disk usage" to "df -h"
+                    ).forEach { (label, cmd) ->
                         UtilityChip(
                             label = label,
                             isSelected = false,
@@ -512,68 +761,65 @@ private fun TargetAdbCommandsSection(viewModel: AfsViewModel) {
             }
         }
 
-        // LOGS Window
-        item {
-            TerminalLogView(
-                title = "TARGET LOGS:",
-                logsText = targetLogs,
-                isSuccess = lastSuccess,
-                onCopy = {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("Target Logs", targetLogs))
-                    Toast.makeText(context, "Target logs copied", Toast.LENGTH_SHORT).show()
-                },
-                onClear = {
-                    targetLogs = "Ready for Target ADB commands.\n$ "
-                    lastSuccess = null
-                },
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-        }
+        item { TargetConsole(viewModel, "TARGET LOGS:") }
     }
 }
 
-/**
- * Target Apps Management.
- */
+/** Installed packages read live from the target with pm list packages. */
 @Composable
 private fun TargetAppsSection(viewModel: AfsViewModel) {
     val context = LocalContext.current
+    val packages by viewModel.targetPackages.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
-    var targetPackages by remember {
-        mutableStateOf(
-            listOf(
-                "com.android.chrome" to "Chrome Browser",
-                "com.google.android.youtube" to "YouTube",
-                "com.google.android.apps.photos" to "Google Photos",
-                "com.android.settings" to "Settings",
-                "com.android.camera" to "Camera"
-            )
-        )
-    }
 
-    val filtered = targetPackages.filter {
-        searchQuery.isBlank() || it.first.contains(searchQuery, ignoreCase = true) || it.second.contains(searchQuery, ignoreCase = true)
-    }
+    val filtered = packages.filter { searchQuery.isBlank() || it.contains(searchQuery, ignoreCase = true) }
+
+    fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
 
     Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Button(
+                onClick = { viewModel.loadTargetPackages(false) { toast(it) } },
+                colors = ButtonDefaults.buttonColors(containerColor = AfsCyan),
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(Icons.Default.Refresh, contentDescription = null, tint = AfsSurface, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("User apps", color = AfsSurface, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+            OutlinedButton(
+                onClick = { viewModel.loadTargetPackages(true) { toast(it) } },
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("All apps", color = AfsCyan, fontSize = 11.sp)
+            }
+        }
+
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("Filter target apps...", fontSize = 12.sp, color = AfsTextSecondary) },
+            placeholder = { Text("Filter target packages...", fontSize = 12.sp, color = AfsTextSecondary) },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = AfsTextSecondary, modifier = Modifier.size(16.dp)) },
             singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp)
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
         )
+
+        if (packages.isEmpty()) {
+            Text(
+                "Connect a target over Wireless ADB, then tap User apps to read its installed packages.",
+                fontSize = 12.sp, color = AfsTextSecondary, modifier = Modifier.padding(8.dp)
+            )
+        }
 
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(6.dp),
             contentPadding = PaddingValues(vertical = 4.dp),
             modifier = Modifier.fillMaxSize()
         ) {
-            items(filtered) { (pkg, name) ->
+            items(filtered, key = { it }) { pkg ->
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = AfsSurfaceContainer,
@@ -583,30 +829,21 @@ private fun TargetAppsSection(viewModel: AfsViewModel) {
                         .padding(8.dp)
                 ) {
                     Column {
-                        Text(text = name, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AfsTextPrimary)
-                        Text(text = pkg, fontSize = 10.sp, color = AfsTextSecondary, fontFamily = FontFamily.Monospace)
+                        Text(text = pkg, fontSize = 12.sp, color = AfsTextPrimary, fontFamily = FontFamily.Monospace)
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             OutlinedButton(
                                 onClick = {
                                     viewModel.runCommand("monkey -p $pkg -c android.intent.category.LAUNCHER 1", TargetScope.TARGET, BackendType.TARGET_ADB)
-                                    Toast.makeText(context, "Launched on Target", Toast.LENGTH_SHORT).show()
                                 },
                                 modifier = Modifier.height(28.dp),
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                            ) {
-                                Text("Launch", fontSize = 10.sp, color = AfsCyan)
-                            }
+                            ) { Text("Launch", fontSize = 10.sp, color = AfsCyan) }
                             OutlinedButton(
-                                onClick = {
-                                    viewModel.runCommand("am force-stop $pkg", TargetScope.TARGET, BackendType.TARGET_ADB)
-                                    Toast.makeText(context, "Stopped on Target", Toast.LENGTH_SHORT).show()
-                                },
+                                onClick = { viewModel.runCommand("am force-stop $pkg", TargetScope.TARGET, BackendType.TARGET_ADB) },
                                 modifier = Modifier.height(28.dp),
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                            ) {
-                                Text("Force Stop", fontSize = 10.sp, color = AfsAmber)
-                            }
+                            ) { Text("Force Stop", fontSize = 10.sp, color = AfsAmber) }
                             OutlinedButton(
                                 onClick = {
                                     viewModel.runCommand(
@@ -627,9 +864,7 @@ private fun TargetAppsSection(viewModel: AfsViewModel) {
                                 },
                                 modifier = Modifier.height(28.dp),
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                            ) {
-                                Text("Uninstall", fontSize = 10.sp, color = AfsRed)
-                            }
+                            ) { Text("Uninstall", fontSize = 10.sp, color = AfsRed) }
                         }
                     }
                 }
@@ -638,108 +873,121 @@ private fun TargetAppsSection(viewModel: AfsViewModel) {
     }
 }
 
-/**
- * Target Files: Clearly labeled HOST -> TARGET and TARGET -> HOST transfers.
- */
+/** Real file transfer: push a file you pick to the target, pull a target file into a location you pick. */
 @Composable
 private fun TargetFilesSection(viewModel: AfsViewModel) {
     val context = LocalContext.current
-    var targetPath by remember { mutableStateOf("/sdcard/Download") }
+    var targetDir by remember { mutableStateOf("/sdcard/Download") }
+    var pullPath by remember { mutableStateOf("") }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        // Transfer Action Buttons
-        Surface(
-            shape = RoundedCornerShape(10.dp),
-            color = AfsSurfaceContainer,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp)
-                .border(1.dp, AfsOutline, RoundedCornerShape(10.dp))
-                .padding(10.dp)
-        ) {
-            Column {
-                Text(
-                    text = "CROSS-DEVICE FILE TRANSFERS",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = AfsCyan,
-                    fontFamily = FontFamily.Monospace
+    fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+
+    val pushLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) {
+            toast("Pushing to $targetDir ...")
+            viewModel.pushToTarget(uri, targetDir) { toast(it) }
+        }
+    }
+    val pullLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri: Uri? ->
+        if (uri != null) {
+            toast("Pulling $pullPath ...")
+            viewModel.pullFromTarget(pullPath.trim(), uri) { toast(it) }
+        }
+    }
+
+    LazyColumn(
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(vertical = 4.dp)
+    ) {
+        item {
+            SectionCard("HOST -> TARGET (PUSH)", AfsCyan) {
+                OutlinedTextField(
+                    value = targetDir,
+                    onValueChange = { targetDir = it },
+                    label = { Text("Destination folder on target") },
+                    textStyle = monoStyle,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Button(
+                    onClick = { pushLauncher.launch(arrayOf("*/*")) },
+                    colors = ButtonDefaults.buttonColors(containerColor = AfsCyan),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Button(
-                        onClick = {
-                            viewModel.runCommand("push /sdcard/transfer_file.zip $targetPath/", TargetScope.TARGET, BackendType.TARGET_ADB)
-                            Toast.makeText(context, "Pushed to Target $targetPath", Toast.LENGTH_SHORT).show()
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = AfsCyan),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Default.Upload, contentDescription = null, tint = AfsSurface, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("HOST → TARGET", color = AfsSurface, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    }
+                    Icon(Icons.Default.Upload, contentDescription = null, tint = AfsSurface, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Choose file and push", color = AfsSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "Transfers use base64 over the ADB shell, so large files are slow. The size is verified after the copy.",
+                    fontSize = 10.sp, color = AfsTextSecondary
+                )
+            }
+        }
 
-                    Button(
-                        onClick = {
-                            viewModel.runCommand("pull $targetPath/remote_file.png /sdcard/Download/", TargetScope.TARGET, BackendType.TARGET_ADB)
-                            Toast.makeText(context, "Pulled to Host /sdcard/Download/", Toast.LENGTH_SHORT).show()
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = AfsAmber),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Default.Download, contentDescription = null, tint = AfsSurface, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("TARGET → HOST", color = AfsSurface, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    }
+        item {
+            SectionCard("TARGET -> HOST (PULL)", AfsAmber) {
+                OutlinedTextField(
+                    value = pullPath,
+                    onValueChange = { pullPath = it },
+                    label = { Text("Full path of file on target") },
+                    placeholder = { Text("/sdcard/Download/file.zip") },
+                    textStyle = monoStyle,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    enabled = pullPath.isNotBlank(),
+                    onClick = { pullLauncher.launch(pullPath.trim().substringAfterLast('/').ifBlank { "pulled_file" }) },
+                    colors = ButtonDefaults.buttonColors(containerColor = AfsAmber),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Download, contentDescription = null, tint = AfsSurface, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Pull and choose where to save", color = AfsSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(6.dp))
-
-        // Target Directory Preview
-        Surface(
-            shape = RoundedCornerShape(8.dp),
-            color = AfsSurfaceContainer,
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, AfsOutlineVariant, RoundedCornerShape(8.dp))
-                .padding(8.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(text = "Target Path: ", fontSize = 11.sp, color = AfsTextSecondary, fontFamily = FontFamily.Monospace)
-                Text(text = targetPath, fontSize = 12.sp, color = AfsCyan, fontFamily = FontFamily.Monospace, modifier = Modifier.weight(1f))
-                OutlinedButton(
-                    onClick = {
-                        viewModel.runCommand("ls -la $targetPath", TargetScope.TARGET, BackendType.TARGET_ADB)
-                    },
-                    modifier = Modifier.height(28.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+        item {
+            SectionCard("BROWSE TARGET FOLDER") {
+                Button(
+                    onClick = { viewModel.runCommand("ls -la ${targetDir}", TargetScope.TARGET, BackendType.TARGET_ADB) },
+                    colors = ButtonDefaults.buttonColors(containerColor = AfsCyan),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Refresh", fontSize = 10.sp)
+                    Text("List $targetDir", color = AfsSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
+
+        item { TargetConsole(viewModel, "TRANSFER LOGS:") }
     }
 }
 
-/**
- * Target Device Info.
- */
+/** Live target telemetry read from the device (ADB properties or fastboot variables). */
 @Composable
-private fun TargetDeviceInfoSection(info: com.example.model.TargetDeviceInfo) {
+private fun TargetDeviceInfoSection(viewModel: AfsViewModel, info: TargetDeviceInfo) {
+    val context = LocalContext.current
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = PaddingValues(vertical = 4.dp),
         modifier = Modifier.fillMaxSize()
     ) {
+        item {
+            Button(
+                onClick = { viewModel.refreshTargetInfo { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() } },
+                colors = ButtonDefaults.buttonColors(containerColor = AfsCyan),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Refresh, contentDescription = null, tint = AfsSurface, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Read info from target", color = AfsSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
         item {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MetricCard("TARGET MODEL", info.model, subValue = info.manufacturer, modifier = Modifier.weight(1f))
@@ -753,7 +1001,21 @@ private fun TargetDeviceInfoSection(info: com.example.model.TargetDeviceInfo) {
             }
         }
         item {
-            MetricCard("CPU ABI / ARCH", info.cpuAbi, subValue = "A/B Partition: ${if (info.isAbDevice) "Yes" else "No"}", modifier = Modifier.fillMaxWidth())
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MetricCard("RAM", info.ramInfo, modifier = Modifier.weight(1f))
+                MetricCard("STORAGE", info.storageInfo, modifier = Modifier.weight(1f))
+            }
+        }
+        item {
+            MetricCard(
+                "CPU ABI / SLOT",
+                info.cpuAbi,
+                subValue = "A/B: ${if (info.isAbDevice) "Yes (slot ${info.currentSlot})" else "No"}",
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+        item {
+            MetricCard("BUILD", info.buildId, subValue = "Patch: ${info.securityPatch}", modifier = Modifier.fillMaxWidth())
         }
         item {
             MetricCard("KERNEL", info.kernelVersion, modifier = Modifier.fillMaxWidth())
