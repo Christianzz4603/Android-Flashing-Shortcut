@@ -71,6 +71,10 @@ private val homeMenuEntries = listOf(
     HomeMenuEntry("Updates", Icons.Default.History, Color(0xFFEC407A), MainTab.UPDATES)
 )
 
+/**
+ * Home hub screen: a colored-icon list menu matching the AFS reference UI
+ * (ADB Tools, Fastboot Tools, App Management, About, Settings, Updates).
+ */
 @Composable
 fun HomeMenuScreen(onNavigate: (MainTab) -> Unit) {
     var query by remember { mutableStateOf("") }
@@ -90,7 +94,7 @@ fun HomeMenuScreen(onNavigate: (MainTab) -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(horizontal = 16.dp, top = 12.dp, bottom = 4.dp)
+                .padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 4.dp)
         ) {
             Text(
                 text = "Android Flashing Shortcuts",
@@ -111,7 +115,7 @@ fun HomeMenuScreen(onNavigate: (MainTab) -> Unit) {
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
-            placeholder = { Text("Search ADB and fastboot commands...", fontSize = 13.sp, color = AfsTextSecondary) },
+            placeholder = { Text("Search tools...", fontSize = 13.sp, color = AfsTextSecondary) },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = AfsTextSecondary) },
             singleLine = true,
             colors = TextFieldDefaults.colors(
