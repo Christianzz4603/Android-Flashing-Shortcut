@@ -273,9 +273,18 @@ class AfsViewModel(application: Application) : AndroidViewModel(application) {
 
     // ------------------------------------------------------------ Target connection
 
-    fun connectWirelessTarget(ip: String, port: Int = 5555, onResult: (Boolean, String) -> Unit) {
+    /** Step 1 (once per device): pair using the 6-digit code from "Wireless debugging > Pair device with pairing code". */
+    fun pairWirelessTarget(host: String, port: Int, code: String, onResult: (Boolean, String) -> Unit) {
         viewModelScope.launch {
-            val (success, message) = backendRegistry.targetAdb.connectWirelessAdb(ip, port)
+            val (success, message) = backendRegistry.targetAdb.pairWireless(host, port, code)
+            onResult(success, message)
+        }
+    }
+
+    /** Step 2: like Shizuku's "Start" - auto-discovers an already-paired target on the current Wi-Fi network. */
+    fun startWirelessTarget(host: String? = null, port: Int? = null, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val (success, message) = backendRegistry.targetAdb.startWireless(host, port)
             if (success) refreshTargetInfo()
             onResult(success, message)
         }
