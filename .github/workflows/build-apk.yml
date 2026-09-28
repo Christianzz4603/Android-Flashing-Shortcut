@@ -29,8 +29,13 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # GitHub's ubuntu runners already include the Android SDK. Just accept the licenses so
+      # Gradle can auto-download any missing platform / build-tools.
+      - name: Accept Android SDK licenses
+        run: |
+          SDKMANAGER=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | sort | tail -n 1)
+          echo "Using $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
 
       # The repo has no gradlew / wrapper jar, so install the exact Gradle version from gradle-wrapper.properties.
       - name: Set up Gradle
