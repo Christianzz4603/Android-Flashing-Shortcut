@@ -28,21 +28,22 @@ data class HostDeviceInfo(
     val activeSlot: String
 )
 
+/** Live telemetry read from a connected target phone. Every field is "Unknown" until read from the device. */
 data class TargetDeviceInfo(
-    val model: String = "Google Pixel 8 Pro",
-    val manufacturer: String = "Google",
-    val androidVersion: String = "14.0",
-    val sdkInt: Int = 34,
-    val buildId: String = "UQ1A.240205.004",
-    val securityPatch: String = "2024-03-05",
-    val kernelVersion: String = "5.15.131-android14-9-g8e91",
-    val cpuAbi: String = "arm64-v8a",
-    val ramInfo: String = "12 GB LPDDR5X",
-    val storageInfo: String = "256 GB UFS 3.1",
-    val battery: String = "88% (Charging)",
-    val unlockedState: String = "unlocked",
-    val currentSlot: String = "a",
-    val hasInitBoot: Boolean = true,
-    val isAbDevice: Boolean = true,
+    val model: String = "Unknown",
+    val manufacturer: String = "Unknown",
+    val androidVersion: String = "Unknown",
+    val sdkInt: Int = 0,
+    val buildId: String = "Unknown",
+    val securityPatch: String = "Unknown",
+    val kernelVersion: String = "Unknown",
+    val cpuAbi: String = "Unknown",
+    val ramInfo: String = "Unknown",
+    val storageInfo: String = "Unknown",
+    val battery: String = "Unknown",
+    val unlockedState: String = "Unknown",
+    val currentSlot: String = "Unknown",
+    val hasInitBoot: Boolean = false,
+    val isAbDevice: Boolean = false,
     val fastbootVariant: String = "Normal"
 )

@@ -118,6 +118,13 @@ dependencies {
   implementation(libs.okhttp)
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
+
+  // Real ADB network protocol client (Maven Central) used for Wireless ADB to a target phone
+  implementation("com.tananaev:adblib:1.3")
+  // Real Shizuku client API (Maven Central) used for privileged host commands
+  implementation("dev.rikka.shizuku:api:13.1.5")
+  implementation("dev.rikka.shizuku:provider:13.1.4")
+
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)

@@ -6,10 +6,12 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.hardware.display.DisplayManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
 import android.os.StatFs
+import android.view.Display
 import com.example.model.AppInfoItem
 import com.example.model.FileItem
 import com.example.model.HostDeviceInfo
@@ -32,6 +34,15 @@ object DeviceScanner {
         val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
         val tempRaw = batteryIntent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0
         val tempC = tempRaw / 10.0f
+        val healthStr = when (batteryIntent?.getIntExtra(BatteryManager.EXTRA_HEALTH, -1) ?: -1) {
+            BatteryManager.BATTERY_HEALTH_GOOD -> "Good"
+            BatteryManager.BATTERY_HEALTH_OVERHEAT -> "Overheat"
+            BatteryManager.BATTERY_HEALTH_DEAD -> "Dead"
+            BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE -> "Over voltage"
+            BatteryManager.BATTERY_HEALTH_UNSPECIFIED_FAILURE -> "Failure"
+            BatteryManager.BATTERY_HEALTH_COLD -> "Cold"
+            else -> "Unknown"
+        }
 
         // Memory Info
         val actManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
@@ -49,6 +60,12 @@ object DeviceScanner {
         val displayMetrics = context.resources.displayMetrics
         val resolution = "${displayMetrics.widthPixels} x ${displayMetrics.heightPixels}"
         val densityDpi = displayMetrics.densityDpi
+        val refresh = try {
+            (context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager)
+                .getDisplay(Display.DEFAULT_DISPLAY)?.refreshRate ?: 0f
+        } catch (_: Exception) {
+            0f
+        }
 
         // Kernel
         val kernel = readKernelVersion()
@@ -57,7 +74,7 @@ object DeviceScanner {
         val treble = getSystemProperty("ro.treble.enabled") == "true"
         val abUpdate = getSystemProperty("ro.build.ab_update") == "true"
         val slot = getSystemProperty("ro.boot.slot_suffix").ifBlank {
-            if (abUpdate) "_a" else "Legacy (A-only)"
+            if (abUpdate) "Unknown" else "N/A (A-only)"
         }
 
         return HostDeviceInfo(
@@ -78,10 +95,10 @@ object DeviceScanner {
             freeStorage = String.format("%.1f GB", freeStorageGb),
             displayResolution = resolution,
             displayDensityDpi = densityDpi,
-            refreshRate = 60.0f,
+            refreshRate = refresh,
             batteryLevel = batteryPct,
             batteryStatus = if (isCharging) "Charging" else "Discharging",
-            batteryHealth = "Good",
+            batteryHealth = healthStr,
             batteryTemperature = tempC,
             isTrebleEnabled = treble,
             isAbUpdateSupported = abUpdate,
@@ -147,30 +164,31 @@ object DeviceScanner {
         appList.sortedBy { it.appName.lowercase() }
     }
 
-    suspend fun getRunningProcesses(context: Context): List<ProcessItem> = withContext(Dispatchers.IO) {
-        val actManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        val running = actManager.runningAppProcesses ?: emptyList()
+    /**
+     * Parses real `ps -A -o PID,USER,RSS,ARGS` output (run through Shizuku / root / shell).
+     * Memory is the real resident set size in KB. Nothing is invented if the command returns nothing.
+     */
+    fun parseProcessList(output: String, selfPid: Int): List<ProcessItem> {
         val list = mutableListOf<ProcessItem>()
-
-        for (proc in running) {
+        for (line in output.lines().drop(1)) {
+            val t = line.trim()
+            if (t.isEmpty()) continue
+            val parts = t.split(Regex("\\s+"), limit = 4)
+            if (parts.size < 4) continue
+            val pid = parts[0].toIntOrNull() ?: continue
+            val rss = parts[2].toLongOrNull() ?: continue
+            val name = parts[3].substringBefore(' ')
             list.add(
                 ProcessItem(
-                    pid = proc.pid,
-                    name = proc.processName,
-                    user = "u${proc.uid / 100000}_a${proc.uid % 100000}",
-                    memoryKb = 1024L * (proc.pid % 40 + 15),
-                    isKillable = proc.processName != context.packageName
+                    pid = pid,
+                    name = name,
+                    user = parts[1],
+                    memoryKb = rss,
+                    isKillable = pid != selfPid && pid > 1
                 )
             )
         }
-        if (list.isEmpty()) {
-            list.add(ProcessItem(pid = android.os.Process.myPid(), name = context.packageName, user = "u0_a102", memoryKb = 42000, isKillable = false))
-            list.add(ProcessItem(pid = 1, name = "init", user = "root", memoryKb = 3200, isKillable = false))
-            list.add(ProcessItem(pid = 412, name = "adbd", user = "shell", memoryKb = 8400, isKillable = true))
-            list.add(ProcessItem(pid = 890, name = "system_server", user = "system", memoryKb = 185000, isKillable = false))
-            list.add(ProcessItem(pid = 1204, name = "com.android.systemui", user = "u0_a40", memoryKb = 128000, isKillable = true))
-        }
-        list
+        return list.sortedByDescending { it.memoryKb }
     }
 
     suspend fun listFiles(dirPath: String): List<FileItem> = withContext(Dispatchers.IO) {

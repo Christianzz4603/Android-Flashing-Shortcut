@@ -1,5 +1,6 @@
 package com.example.utils
 
+import com.example.backend.CommandResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,60 +23,46 @@ class LogcatReader {
 
     private var isPaused = false
 
-    suspend fun readHostLogcat(maxLines: Int = 150) = withContext(Dispatchers.IO) {
+    /**
+     * Reads real logcat output. When [runner] is supplied (Shizuku / root / shell) the command runs through it,
+     * so a privileged backend returns system-wide logs. Without one, this app's own logcat is read.
+     * If nothing can be read the list stays empty; no placeholder lines are ever generated.
+     */
+    suspend fun readHostLogcat(
+        maxLines: Int = 150,
+        runner: (suspend (String) -> CommandResult)? = null
+    ) = withContext(Dispatchers.IO) {
         if (isPaused) return@withContext
-
+        val cmd = "logcat -d -v time -t $maxLines"
         try {
-            val process = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-v", "time", "-t", maxLines.toString()))
-            val reader = BufferedReader(InputStreamReader(process.inputStream))
-            val entries = mutableListOf<LogEntry>()
-
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                line?.let {
-                    val entry = parseLogLine(it)
-                    entries.add(entry)
-                }
-            }
-            reader.close()
-            process.waitFor()
-
-            if (entries.isNotEmpty()) {
-                _logs.value = entries
+            val text = if (runner != null) {
+                runner(cmd).stdout
             } else {
-                generateFallbackLogs()
+                val process = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-v", "time", "-t", maxLines.toString()))
+                val out = BufferedReader(InputStreamReader(process.inputStream)).use { it.readText() }
+                process.waitFor()
+                out
             }
+            _logs.value = text.lines().filter { it.isNotBlank() }.map { parseLogLine(it) }
         } catch (_: Exception) {
-            generateFallbackLogs()
+            _logs.value = emptyList()
         }
     }
 
     private fun parseLogLine(line: String): LogEntry {
         val level = when {
-            line.contains(" E ") || line.contains(" E/") -> "E"
-            line.contains(" W ") || line.contains(" W/") -> "W"
-            line.contains(" D ") || line.contains(" D/") -> "D"
-            line.contains(" V ") || line.contains(" V/") -> "V"
+            line.contains(" E/") -> "E"
+            line.contains(" W/") -> "W"
+            line.contains(" D/") -> "D"
+            line.contains(" V/") -> "V"
             else -> "I"
         }
         val tag = when {
-            line.contains(":") -> line.substringBefore(":").takeLast(24).trim()
+            line.contains("/") && line.contains("(") -> line.substringAfter("/").substringBefore("(").trim()
             else -> "System"
         }
-        val msg = line.substringAfter(":", line)
+        val msg = line.substringAfter("): ", line)
         return LogEntry(raw = line, level = level, tag = tag, message = msg)
-    }
-
-    private fun generateFallbackLogs() {
-        val time = System.currentTimeMillis()
-        val sample = listOf(
-            LogEntry(raw = "I/ActivityManager: Start proc com.example for activity", level = "I", tag = "ActivityManager", message = "Start proc com.example"),
-            LogEntry(raw = "D/AdbService: Local ADB listening socket connected", level = "D", tag = "AdbService", message = "Local ADB socket connected"),
-            LogEntry(raw = "I/UsbDeviceManager: USB OTG interface active", level = "I", tag = "UsbDeviceManager", message = "USB OTG state changed: attached"),
-            LogEntry(raw = "W/PackageManager: Querying system package list", level = "W", tag = "PackageManager", message = "Package list queried"),
-            LogEntry(raw = "I/FastbootProtocol: Endpoints enumerated", level = "I", tag = "FastbootProtocol", message = "Bulk In/Out endpoints ready")
-        )
-        _logs.value = sample
     }
 
     fun setPaused(paused: Boolean) {

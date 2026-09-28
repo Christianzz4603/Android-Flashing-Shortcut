@@ -1,17 +1,17 @@
 package com.example.ui
 
 import android.app.Application
+import android.net.Uri
 import android.os.Environment
+import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.backend.AdbAuthState
 import com.example.backend.BackendRegistry
 import com.example.backend.BackendType
 import com.example.backend.CommandResult
 import com.example.backend.CommandSpec
 import com.example.backend.TargetDeviceState
 import com.example.backend.TargetScope
-import com.example.backend.TargetTransport
 import com.example.data.db.AfsDatabase
 import com.example.data.model.CommandHistoryEntity
 import com.example.data.model.ShortcutEntity
@@ -23,12 +23,14 @@ import com.example.model.ProcessItem
 import com.example.model.TargetDeviceInfo
 import com.example.utils.DeviceScanner
 import com.example.utils.LogcatReader
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 enum class MainTab(val label: String, val icon: String) {
@@ -49,6 +51,8 @@ data class DestructiveAction(
     val operation: String,
     val onConfirm: () -> Unit
 )
+
+data class FlashProgress(val label: String, val sent: Long, val total: Long)
 
 class AfsViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -75,6 +79,12 @@ class AfsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _targetDeviceInfo = MutableStateFlow(TargetDeviceInfo())
     val targetDeviceInfo: StateFlow<TargetDeviceInfo> = _targetDeviceInfo.asStateFlow()
+
+    private val _targetPackages = MutableStateFlow<List<String>>(emptyList())
+    val targetPackages: StateFlow<List<String>> = _targetPackages.asStateFlow()
+
+    private val _flashProgress = MutableStateFlow<FlashProgress?>(null)
+    val flashProgress: StateFlow<FlashProgress?> = _flashProgress.asStateFlow()
 
     // Apps
     private val _installedApps = MutableStateFlow<List<AppInfoItem>>(emptyList())
@@ -143,6 +153,7 @@ class AfsViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshCapabilities() {
+        backendRegistry.shizuku.requestPermissionIfNeeded()
         _isAdbAvailable.value = backendRegistry.adb.isAvailable()
         _isShizukuAvailable.value = backendRegistry.shizuku.isAvailable()
         _isRootAvailable.value = backendRegistry.root.isAvailable()
@@ -150,7 +161,7 @@ class AfsViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshHostInfo() {
         viewModelScope.launch {
-            _hostDeviceInfo.value = DeviceScanner.getHostDeviceInfo(getApplication())
+            _hostDeviceInfo.value = withContext(Dispatchers.IO) { DeviceScanner.getHostDeviceInfo(getApplication()) }
         }
     }
 
@@ -182,15 +193,29 @@ class AfsViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Runs a host command on the most privileged backend that works: Shizuku, then root, then plain shell. */
+    private suspend fun executeOnBestHostBackend(cmd: String): CommandResult {
+        if (backendRegistry.shizuku.isAvailable()) {
+            val r = backendRegistry.shizuku.execute(cmd)
+            if (r.isSuccess || r.stdout.isNotBlank()) return r
+        }
+        if (backendRegistry.root.isAvailable()) {
+            val r = backendRegistry.root.execute(cmd)
+            if (r.isSuccess || r.stdout.isNotBlank()) return r
+        }
+        return backendRegistry.localShell.execute(cmd)
+    }
+
     fun loadProcesses() {
         viewModelScope.launch {
-            _processItems.value = DeviceScanner.getRunningProcesses(getApplication())
+            val res = executeOnBestHostBackend("ps -A -o PID,USER,RSS,ARGS")
+            _processItems.value = DeviceScanner.parseProcessList(res.stdout, android.os.Process.myPid())
         }
     }
 
     fun refreshLogs() {
         viewModelScope.launch {
-            logcatReader.readHostLogcat()
+            logcatReader.readHostLogcat(runner = { cmd -> executeOnBestHostBackend(cmd) })
         }
     }
 
@@ -225,6 +250,15 @@ class AfsViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Shows the confirmation dialog for an action that is not a plain command (e.g. flashing a file). */
+    fun requestDestructiveConfirmation(info: DestructiveAction) {
+        if (confirmDestructive.value) {
+            _destructiveDialog.value = info
+        } else {
+            info.onConfirm()
+        }
+    }
+
     fun dismissDestructiveDialog() {
         _destructiveDialog.value = null
     }
@@ -237,54 +271,218 @@ class AfsViewModel(application: Application) : AndroidViewModel(application) {
         _showResultDialog.value = false
     }
 
+    // ------------------------------------------------------------ Target connection
+
     fun connectWirelessTarget(ip: String, port: Int = 5555, onResult: (Boolean, String) -> Unit) {
         viewModelScope.launch {
             val (success, message) = backendRegistry.targetAdb.connectWirelessAdb(ip, port)
-            if (success) {
-                _targetDeviceInfo.value = _targetDeviceInfo.value.copy(
-                    model = "Wireless Target ($ip)",
-                    unlockedState = "unlocked"
-                )
-            }
+            if (success) refreshTargetInfo()
             onResult(success, message)
         }
     }
 
-    fun scanUsbOtgTargets() {
+    fun scanUsbOtgTargets(onResult: (String) -> Unit = {}) {
         viewModelScope.launch {
             val devices = backendRegistry.targetAdb.scanUsbDevices()
-            if (devices.isNotEmpty()) {
-                val dev = devices.first()
-                backendRegistry.targetAdb.connectUsbOtg(dev)
-            } else {
-                backendRegistry.targetAdb.updateTargetState {
-                    it.copy(
-                        isConnected = true,
-                        transport = TargetTransport.USB_OTG,
-                        model = "Google Pixel 8 (OTG)",
-                        serial = "2B181FDH2004X",
-                        authState = AdbAuthState.AUTHORIZED,
-                        isFastbootMode = false,
-                        fastbootVariant = "Normal"
-                    )
-                }
+            if (devices.isEmpty()) {
+                onResult("No ADB/fastboot USB device found. Connect the target with an OTG cable (bootloader mode for Fastboot tools).")
+                return@launch
             }
+            val (ok, msg) = backendRegistry.targetAdb.connectUsb(devices.first())
+            if (ok) refreshTargetInfo()
+            onResult(msg)
         }
     }
 
+    /** Real toggle: reboots a fastboot device to system, or an ADB device to the bootloader. */
     fun toggleTargetFastbootMode() {
-        val currentState = backendRegistry.targetAdb.deviceState.value
-        val newFastboot = !currentState.isFastbootMode
-        backendRegistry.targetAdb.updateTargetState {
-            it.copy(
-                isFastbootMode = newFastboot,
-                fastbootVariant = if (newFastboot) "Fastboot" else "Normal"
-            )
+        val state = backendRegistry.targetAdb.deviceState.value
+        if (state.isFastbootMode) {
+            runCommand("reboot", TargetScope.TARGET, BackendType.TARGET_FASTBOOT)
+        } else {
+            runCommand("reboot bootloader", TargetScope.TARGET, BackendType.TARGET_ADB)
         }
     }
 
     fun disconnectTarget() {
         backendRegistry.targetAdb.disconnect()
+        _targetDeviceInfo.value = TargetDeviceInfo()
+        _targetPackages.value = emptyList()
+    }
+
+    private fun parseFastbootVars(stdout: String): Map<String, String> {
+        val map = mutableMapOf<String, String>()
+        for (line in stdout.lines()) {
+            val l = line.removePrefix("(bootloader)").trim()
+            val i = l.indexOf(':')
+            if (i > 0) map[l.substring(0, i).trim()] = l.substring(i + 1).trim()
+        }
+        return map
+    }
+
+    /** Reads real telemetry from the connected target (ADB properties or fastboot variables). */
+    fun refreshTargetInfo(onResult: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val adb = backendRegistry.targetAdb
+            val state = adb.deviceState.value
+            when {
+                adb.isAvailable() -> {
+                    val p = adb.fetchDeviceProps()
+                    if (p.isEmpty()) {
+                        onResult("Could not read properties from the target.")
+                        return@launch
+                    }
+                    val ramKb = p["mem"].orEmpty().filter { it.isDigit() }.toLongOrNull()
+                    val dfParts = p["df"].orEmpty().trim().split(Regex("\\s+"))
+                    val totalKb = dfParts.getOrNull(1)?.toLongOrNull()
+                    val freeKb = dfParts.getOrNull(3)?.toLongOrNull()
+                    val locked = p["locked"].orEmpty()
+                    _targetDeviceInfo.value = TargetDeviceInfo(
+                        model = p["model"].orEmpty().ifBlank { "Unknown" },
+                        manufacturer = p["manufacturer"].orEmpty().ifBlank { "Unknown" },
+                        androidVersion = p["release"].orEmpty().ifBlank { "Unknown" },
+                        sdkInt = p["sdk"]?.toIntOrNull() ?: 0,
+                        buildId = p["build"].orEmpty().ifBlank { "Unknown" },
+                        securityPatch = p["patch"].orEmpty().ifBlank { "Unknown" },
+                        kernelVersion = p["kernel"].orEmpty().ifBlank { "Unknown" },
+                        cpuAbi = p["abi"].orEmpty().ifBlank { "Unknown" },
+                        ramInfo = if (ramKb != null) String.format("%.1f GB", ramKb / 1024.0 / 1024.0) else "Unknown",
+                        storageInfo = if (totalKb != null && freeKb != null) {
+                            String.format("%.1f GB free of %.1f GB", freeKb / 1024.0 / 1024.0, totalKb / 1024.0 / 1024.0)
+                        } else "Unknown",
+                        battery = p["battery"].orEmpty().let { if (it.isBlank()) "Unknown" else "$it%" },
+                        unlockedState = when (locked) {
+                            "0" -> "unlocked"
+                            "1" -> "locked"
+                            else -> "Unknown"
+                        },
+                        currentSlot = p["slot"].orEmpty().removePrefix("_").ifBlank { "N/A" },
+                        hasInitBoot = (p["initboot"]?.toIntOrNull() ?: 0) > 0,
+                        isAbDevice = p["ab"] == "true",
+                        fastbootVariant = "Normal"
+                    )
+                    onResult("Target info updated")
+                }
+                state.isConnected && state.isFastbootMode -> {
+                    val res = backendRegistry.targetFastboot.execute("getvar all")
+                    val v = parseFastbootVars(res.stdout + "\n" + res.stderr)
+                    if (!res.isSuccess && v.isEmpty()) {
+                        onResult("Fastboot getvar failed: ${res.stderr.ifBlank { res.stdout }}")
+                        return@launch
+                    }
+                    _targetDeviceInfo.value = TargetDeviceInfo(
+                        model = v["product"] ?: state.model,
+                        unlockedState = when (v["unlocked"]) {
+                            "yes" -> "unlocked"
+                            "no" -> "locked"
+                            else -> "Unknown"
+                        },
+                        currentSlot = v["current-slot"] ?: "N/A",
+                        hasInitBoot = v.containsKey("has-slot:init_boot"),
+                        isAbDevice = (v["slot-count"]?.toIntOrNull() ?: 0) > 1,
+                        fastbootVariant = "Fastboot"
+                    )
+                    onResult("Fastboot variables read")
+                }
+                else -> onResult("No target connected.")
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ Target apps and files
+
+    fun loadTargetPackages(includeSystem: Boolean, onResult: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val res = backendRegistry.targetAdb.execute(if (includeSystem) "pm list packages" else "pm list packages -3")
+            if (res.isSuccess) {
+                val names = mutableListOf<String>()
+                for (line in res.stdout.lines()) {
+                    val t = line.trim()
+                    if (t.startsWith("package:")) names.add(t.removePrefix("package:"))
+                }
+                _targetPackages.value = names.sorted()
+                onResult("Loaded ${names.size} packages from the target")
+            } else {
+                onResult(res.stderr.ifBlank { res.stdout }.ifBlank { "Failed to list packages" })
+            }
+        }
+    }
+
+    private fun displayName(uri: Uri): String {
+        getApplication<Application>().contentResolver
+            .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (i >= 0) return c.getString(i).replace('/', '_')
+                }
+            }
+        return (uri.lastPathSegment ?: "file").replace('/', '_')
+    }
+
+    fun pushToTarget(uri: Uri, remoteDir: String, onResult: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val name = displayName(uri)
+            val remote = remoteDir.trimEnd('/') + "/" + name
+            val result = withContext(Dispatchers.IO) {
+                val input = app.contentResolver.openInputStream(uri)
+                if (input == null) null else input.use { backendRegistry.targetAdb.pushFile(it, remote) { } }
+            }
+            if (result == null) {
+                onResult("Could not open the selected file")
+                return@launch
+            }
+            _lastCommandResult.value = result.copy(command = "push $name -> $remote")
+            onResult(if (result.isSuccess) result.stdout else result.stderr)
+        }
+    }
+
+    fun pullFromTarget(remotePath: String, destination: Uri, onResult: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val result = withContext(Dispatchers.IO) {
+                val out = app.contentResolver.openOutputStream(destination)
+                if (out == null) null else out.use { backendRegistry.targetAdb.pullFile(remotePath, it) }
+            }
+            if (result == null) {
+                onResult("Could not open the destination file")
+                return@launch
+            }
+            _lastCommandResult.value = result.copy(command = "pull $remotePath")
+            onResult(if (result.isSuccess) result.stdout else result.stderr)
+        }
+    }
+
+    // ------------------------------------------------------------ Fastboot flashing
+
+    fun flashFastboot(partition: String, uri: Uri, onResult: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val size = withContext(Dispatchers.IO) {
+                app.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
+            }
+            if (size <= 0L) {
+                onResult("Could not determine the image size")
+                return@launch
+            }
+            _flashProgress.value = FlashProgress("Flashing $partition", 0, size)
+            val result = withContext(Dispatchers.IO) {
+                val input = app.contentResolver.openInputStream(uri)
+                if (input == null) null else input.use {
+                    backendRegistry.targetFastboot.flashImage(partition, it, size) { sent ->
+                        _flashProgress.value = FlashProgress("Flashing $partition", sent, size)
+                    }
+                }
+            }
+            _flashProgress.value = null
+            if (result == null) {
+                onResult("Could not open the selected image")
+                return@launch
+            }
+            _lastCommandResult.value = result.copy(command = "fastboot flash $partition")
+            _showResultDialog.value = true
+            onResult(if (result.isSuccess) "Flash of $partition finished" else "Flash failed")
+        }
     }
 
     fun captureTargetScreenshot() {
@@ -333,9 +531,9 @@ class AfsViewModel(application: Application) : AndroidViewModel(application) {
                 ShortcutEntity(title = "Reboot to Bootloader", command = "reboot bootloader", targetType = "HOST", backend = "ROOT", category = "Reboot", isDestructive = true),
                 ShortcutEntity(title = "Inspect Battery Stats", command = "dumpsys battery", targetType = "HOST", backend = "LOCAL_SHELL", category = "Diagnostics"),
                 ShortcutEntity(title = "List System Packages", command = "pm list packages -s", targetType = "HOST", backend = "LOCAL_SHELL", category = "Apps"),
-                ShortcutEntity(title = "Target Fastboot Check", command = "fastboot getvar all", targetType = "TARGET", backend = "TARGET_FASTBOOT", category = "Fastboot"),
-                ShortcutEntity(title = "Target Slot Query", command = "fastboot getvar current-slot", targetType = "TARGET", backend = "TARGET_FASTBOOT", category = "Fastboot"),
-                ShortcutEntity(title = "Target Logcat Live", command = "adb logcat -d -t 200", targetType = "TARGET", backend = "TARGET_ADB", category = "Diagnostics")
+                ShortcutEntity(title = "Target Fastboot Check", command = "getvar all", targetType = "TARGET", backend = "TARGET_FASTBOOT", category = "Fastboot"),
+                ShortcutEntity(title = "Target Slot Query", command = "getvar current-slot", targetType = "TARGET", backend = "TARGET_FASTBOOT", category = "Fastboot"),
+                ShortcutEntity(title = "Target Logcat", command = "logcat -d -t 200", targetType = "TARGET", backend = "TARGET_ADB", category = "Diagnostics")
             )
             for (sc in defaults) {
                 repository.saveShortcut(sc)
