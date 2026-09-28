@@ -14,7 +14,8 @@ android {
 
   defaultConfig {
     applicationId = "com.aistudio.flashing.afskx"
-    minSdk = 24
+    // Android 11 (API 30) and up: matches Wireless debugging (pair + auto-discover) support.
+    minSdk = 30
     targetSdk = 36
     versionCode = 1
     versionName = "1.0"
@@ -119,8 +120,12 @@ dependencies {
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
 
-  // Real ADB network protocol client (Maven Central) used for Wireless ADB to a target phone
-  implementation("com.tananaev:adblib:1.3")
+  // Real ADB wireless-debugging client (pair + auto-discover connect), same approach Shizuku's
+  // "start via wireless debugging" flow uses.
+  implementation("com.github.MuntashirAkon:libadb-android:1.0.1")
+  implementation("com.github.MuntashirAkon:sun-security-android:1.1")
+  // Bundled TLS provider so wireless debugging (TLS pairing) works without hidden-API bypass.
+  implementation("org.conscrypt:conscrypt-android:2.5.2")
   // Real Shizuku client API (Maven Central) used for privileged host commands
   implementation("dev.rikka.shizuku:api:13.1.5")
   implementation("dev.rikka.shizuku:provider:13.1.4")

@@ -43,16 +43,12 @@ jobs:
         with:
           gradle-version: 9.3.1
 
-      # app/build.gradle.kts signs debug builds with ${rootDir}/debug.keystore, which is not committed.
-      - name: Create debug keystore
-        run: |
-          keytool -genkeypair -v \
-            -keystore debug.keystore \
-            -storepass android \
-            -alias androiddebugkey \
-            -keypass android \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
+      # app/build.gradle.kts signs debug builds with ${rootDir}/debug.keystore. A fresh keystore
+      # on every run would sign each APK with a different key, so "App not installed as package
+      # conflicts with an existing package" happens whenever someone updates over a previous
+      # build. ci/debug.keystore.b64 is the SAME committed keystore every run.
+      - name: Restore stable debug keystore
+        run: base64 -d ci/debug.keystore.b64 > debug.keystore
 
       - name: Build debug APK
         run: gradle assembleDebug --stacktrace
