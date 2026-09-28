@@ -19,6 +19,8 @@ dependencyResolutionManagement {
   repositories {
     google()
     mavenCentral()
+    // Required for libadb-android and sun-security-android (real Wireless ADB / pairing support).
+    maven { url = uri("https://jitpack.io") }
   }
 }
 
