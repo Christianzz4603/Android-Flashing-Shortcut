@@ -13,6 +13,8 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import android.util.Base64
 import androidx.core.content.ContextCompat
@@ -73,7 +75,7 @@ private data class ShellOutput(val output: String, val exitCode: Int, val error:
 /**
  * Real target-phone backend.
  *  - Wireless: real ADB wireless-debugging client (pair once with the 6-digit code, then "Start"
- *    auto-discovers the target over mDNS and connects) built on libadb-android + Conscrypt, the
+ *    finds the target itself over mDNS/NSD and connects) built on libadb-android + Conscrypt, the
  *    same approach Shizuku's own wireless-debugging starter uses. A network callback keeps
  *    retrying the connection whenever this phone's Wi-Fi network changes, instead of staying
  *    stuck pointed at a now-unreachable address.
@@ -235,7 +237,7 @@ class TargetAdbBackend(private val context: Context) : CommandBackend {
         }
 
     /**
-     * Step 2: connect. With no host given this auto-discovers the target over mDNS on the current
+     * Step 2: connect. With no host given this discovers the target over mDNS/NSD on the current
      * Wi-Fi network (Shizuku's "Start" behavior) - the target must already be paired and its
      * "Wireless debugging" toggle on. With a host/port given, it dials that address directly
      * (useful for plain `adb tcpip 5555` on older Android or devices where mDNS discovery fails).
@@ -260,6 +262,60 @@ class TargetAdbBackend(private val context: Context) : CommandBackend {
             outcome
         }
 
+    /** Finds an already-paired target's live ADB port via mDNS/NSD ("_adb-tls-connect._tcp"). */
+    private suspend fun discoverAdbTlsConnect(timeoutMs: Long): Pair<String, Int>? = withContext(Dispatchers.IO) {
+        val nsdManager = try {
+            context.getSystemService(Context.NSD_SERVICE) as NsdManager
+        } catch (_: Exception) {
+            return@withContext null
+        }
+        withTimeoutOrNull(timeoutMs) {
+            suspendCancellableCoroutine<Pair<String, Int>?> { cont ->
+                var settled = false
+                val discoveryListener = object : NsdManager.DiscoveryListener {
+                    override fun onDiscoveryStarted(serviceType: String) {}
+                    override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+                        if (!settled && cont.isActive) {
+                            settled = true
+                            cont.resume(null)
+                        }
+                    }
+                    override fun onDiscoveryStopped(serviceType: String) {}
+                    override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
+                    override fun onServiceFound(serviceInfo: NsdServiceInfo) {
+                        if (settled) return
+                        try {
+                            nsdManager.resolveService(serviceInfo, object : NsdManager.ResolveListener {
+                                override fun onResolveFailed(si: NsdServiceInfo, errorCode: Int) {}
+                                override fun onServiceResolved(si: NsdServiceInfo) {
+                                    if (settled) return
+                                    val host = si.host?.hostAddress
+                                    if (host != null && si.port > 0) {
+                                        settled = true
+                                        if (cont.isActive) cont.resume(host to si.port)
+                                    }
+                                }
+                            })
+                        } catch (_: Exception) {
+                        }
+                    }
+                    override fun onServiceLost(serviceInfo: NsdServiceInfo) {}
+                }
+                cont.invokeOnCancellation {
+                    try {
+                        nsdManager.stopServiceDiscovery(discoveryListener)
+                    } catch (_: Exception) {
+                    }
+                }
+                try {
+                    nsdManager.discoverServices("_adb-tls-connect._tcp", NsdManager.PROTOCOL_DNS_SD, discoveryListener)
+                } catch (e: Exception) {
+                    if (cont.isActive) cont.resume(null)
+                }
+            }
+        }
+    }
+
     private fun verifyLiveShell(): Boolean = try {
         val stream = adbManager.openStream("shell:echo afs_ok")
         val text = readAllText(stream, 8_000)
@@ -272,31 +328,43 @@ class TargetAdbBackend(private val context: Context) : CommandBackend {
         false
     }
 
-    private fun attemptConnect(host: String?, port: Int?): Pair<Boolean, String> {
+    private suspend fun attemptConnect(host: String?, port: Int?): Pair<Boolean, String> {
+        val resolvedHost: String
+        val resolvedPort: Int
+        val wasDiscovered: Boolean
+        if (!host.isNullOrBlank()) {
+            resolvedHost = host.trim()
+            resolvedPort = port ?: 5555
+            wasDiscovered = false
+        } else {
+            val found = discoverAdbTlsConnect(12_000)
+                ?: return Pair(
+                    false,
+                    "Could not find a paired target on this Wi-Fi network. Make sure Wireless debugging is " +
+                        "turned on and you've paired at least once, and that both phones share the same Wi-Fi network."
+                )
+            resolvedHost = found.first
+            resolvedPort = found.second
+            wasDiscovered = true
+        }
         return try {
-            if (!host.isNullOrBlank()) {
-                @Suppress("UNUSED_EXPRESSION")
-                adbManager.connect(host.trim(), port ?: 5555)
-            } else {
-                @Suppress("UNUSED_EXPRESSION")
-                adbManager.autoConnect(context, 15_000L)
-            }
+            adbManager.connect(resolvedHost, resolvedPort)
             if (verifyLiveShell()) {
                 _deviceState.value = _deviceState.value.copy(
                     isConnected = true,
                     transport = TargetTransport.WIRELESS_ADB,
-                    model = if (!host.isNullOrBlank()) "Target ($host)" else "Target (auto-discovered)",
-                    ipAddress = host.orEmpty(),
+                    model = if (wasDiscovered) "Target (auto-discovered)" else "Target ($resolvedHost)",
+                    ipAddress = resolvedHost,
                     authState = AdbAuthState.AUTHORIZED,
                     isPaired = true,
                     isReconnecting = false
                 )
-                Pair(true, "Connected" + if (!host.isNullOrBlank()) " to $host" else " (auto-discovered on this Wi-Fi network)")
+                Pair(true, if (wasDiscovered) "Connected (auto-discovered on this Wi-Fi network)" else "Connected to $resolvedHost")
             } else {
                 Pair(
                     false,
                     "Could not confirm a live shell. Make sure Wireless debugging is on and this app is " +
-                        "already paired (tap \"Pair new device\" first), and that both phones are on the same Wi-Fi network."
+                        "already paired (tap \"Pair new device\" first)."
                 )
             }
         } catch (e: Exception) {
@@ -315,7 +383,7 @@ class TargetAdbBackend(private val context: Context) : CommandBackend {
                     delay(2_500) // let DHCP / mDNS settle on the new network
                     repeat(4) { attempt ->
                         if (!wirelessAutoReconnect) return@launch
-                        val (ok, _) = withContext(Dispatchers.IO) { attemptConnect(host, port) }
+                        val (ok, _) = attemptConnect(host, port)
                         if (ok) return@launch
                         delay(3_000L * (attempt + 1))
                     }

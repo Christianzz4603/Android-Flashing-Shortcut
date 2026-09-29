@@ -120,10 +120,9 @@ dependencies {
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
 
-  // Real ADB wireless-debugging client (pair + auto-discover connect), same approach Shizuku's
-  // "start via wireless debugging" flow uses. Pinned to a commit past tag 1.0.1 because autoConnect()
-  // was added after that tag.
-  implementation("com.github.MuntashirAkon:libadb-android:c849886ebc6d48e7b46d967e78a6bb65c90c3b74")
+  // Real ADB wireless-debugging client (pair + connect). Pinned to the published tag: it does not
+  // include autoConnect(), so this app discovers the target itself via NsdManager and calls connect().
+  implementation("com.github.MuntashirAkon:libadb-android:1.0.1")
   // Generates the self-signed ADB identity certificate (sun.security.x509 is blocked by the JDK
   // module system at compile time, so BouncyCastle is used instead).
   implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
