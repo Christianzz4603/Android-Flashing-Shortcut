@@ -121,9 +121,12 @@ dependencies {
   implementation(libs.retrofit)
 
   // Real ADB wireless-debugging client (pair + auto-discover connect), same approach Shizuku's
-  // "start via wireless debugging" flow uses.
-  implementation("com.github.MuntashirAkon:libadb-android:1.0.1")
-  implementation("com.github.MuntashirAkon:sun-security-android:1.1")
+  // "start via wireless debugging" flow uses. Pinned to a commit past tag 1.0.1 because autoConnect()
+  // was added after that tag.
+  implementation("com.github.MuntashirAkon:libadb-android:c849886ebc6d48e7b46d967e78a6bb65c90c3b74")
+  // Generates the self-signed ADB identity certificate (sun.security.x509 is blocked by the JDK
+  // module system at compile time, so BouncyCastle is used instead).
+  implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
   // Bundled TLS provider so wireless debugging (TLS pairing) works without hidden-API bypass.
   implementation("org.conscrypt:conscrypt-android:2.5.2")
   // Real Shizuku client API (Maven Central) used for privileged host commands
