@@ -1,28 +1,22 @@
 package com.example.ui.screens
 
-import android.widget.Toast
+import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -47,6 +41,21 @@ import com.example.ui.theme.AfsTextSecondary
 @Composable
 fun AboutScreen() {
     val context = LocalContext.current
+
+    val packageInfo = try {
+        context.packageManager.getPackageInfo(context.packageName, 0)
+    } catch (_: Exception) {
+        null
+    }
+    val versionName = packageInfo?.versionName ?: "1.0"
+    val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        packageInfo?.longVersionCode ?: 0L
+    } else {
+        @Suppress("DEPRECATION")
+        packageInfo?.versionCode?.toLong() ?: 0L
+    }
+    val minSdk = context.applicationInfo.minSdkVersion
+    val targetSdk = context.applicationInfo.targetSdkVersion
 
     LazyColumn(
         modifier = Modifier
@@ -85,7 +94,7 @@ fun AboutScreen() {
                         color = AfsTextPrimary
                     )
                     Text(
-                        text = "AFS v1.0.0 (AFS-STABLE)",
+                        text = "v$versionName (build $versionCode)",
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp,
                         color = AfsCyan
@@ -123,11 +132,11 @@ fun AboutScreen() {
                     Spacer(modifier = Modifier.height(8.dp))
 
                     val principles = listOf(
-                        "• Lightweight GUI: No terminal bloat or IDE complexity",
-                        "• Transparent Execution: Real exit codes, duration & logs",
-                        "• Privacy First: Zero ads, cloud sync, accounts, or telemetry",
-                        "• Cross-Device Support: Host this phone or connect target via USB/Wireless ADB",
-                        "• Safety First: Explicit confirmation for destructive operations"
+                        "\u2022 Lightweight GUI: No terminal bloat or IDE complexity",
+                        "\u2022 Transparent Execution: Real exit codes, duration & logs",
+                        "\u2022 Privacy First: Zero ads, cloud sync, accounts, or telemetry",
+                        "\u2022 Cross-Device Support: Host this phone or connect a target via USB/Wireless debugging",
+                        "\u2022 Safety First: Explicit confirmation for destructive operations"
                     )
 
                     principles.forEach { principle ->
@@ -162,8 +171,9 @@ fun AboutScreen() {
                         fontFamily = FontFamily.Monospace
                     )
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text(text = "Target SDK: 36 (Android 16)", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = AfsTextPrimary)
-                    Text(text = "Min SDK: 24 (Android 7.0+)", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = AfsTextSecondary)
+                    Text(text = "Target SDK: $targetSdk", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = AfsTextPrimary)
+                    Text(text = "Min SDK: $minSdk (Android 11+)", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = AfsTextSecondary)
+                    Text(text = "Running on: Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = AfsTextSecondary)
                     Text(text = "Architecture: Jetpack Compose + Material 3", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = AfsTextSecondary)
                     Text(text = "Database: Local Room Cache", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = AfsTextSecondary)
                 }

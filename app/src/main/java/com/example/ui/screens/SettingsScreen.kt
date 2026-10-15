@@ -19,10 +19,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
@@ -42,7 +40,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -53,7 +50,6 @@ import com.example.ui.components.UtilityChip
 import com.example.ui.theme.AfsCyan
 import com.example.ui.theme.AfsGreen
 import com.example.ui.theme.AfsOutline
-import com.example.ui.theme.AfsOutlineVariant
 import com.example.ui.theme.AfsRed
 import com.example.ui.theme.AfsSurface
 import com.example.ui.theme.AfsSurfaceContainer
@@ -70,6 +66,12 @@ fun SettingsScreen(viewModel: AfsViewModel) {
     val history by viewModel.commandHistory.collectAsState()
 
     var portInput by remember(defaultPort) { mutableStateOf(defaultPort.toString()) }
+
+    val versionName = try {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0"
+    } catch (_: Exception) {
+        "1.0"
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -236,7 +238,7 @@ fun SettingsScreen(viewModel: AfsViewModel) {
                             color = AfsTextPrimary
                         )
                         Text(
-                            text = "Standard port for target phone wireless connection",
+                            text = "Used for the manual IP:port fallback (plain adb tcpip)",
                             fontSize = 11.sp,
                             color = AfsTextSecondary
                         )
@@ -346,7 +348,7 @@ fun SettingsScreen(viewModel: AfsViewModel) {
             }
         }
 
-        // 6. Check for Updates
+        // 6. App version (real update checks live on the Updates screen)
         item {
             Surface(
                 shape = RoundedCornerShape(10.dp),
@@ -356,40 +358,19 @@ fun SettingsScreen(viewModel: AfsViewModel) {
                     .border(1.dp, AfsOutline, RoundedCornerShape(10.dp))
                     .padding(12.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column {
-                        Text(
-                            text = "Updates & Diagnostics",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = AfsTextPrimary
-                        )
-                        Text(
-                            text = "AFS v1.0.0 (Build 2026.09)",
-                            fontSize = 11.sp,
-                            color = AfsTextSecondary,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-
-                    Button(
-                        onClick = {
-                            viewModel.refreshCapabilities()
-                            viewModel.refreshHostInfo()
-                            Toast.makeText(context, "AFS is running latest build", Toast.LENGTH_SHORT).show()
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = AfsCyan),
-                        modifier = Modifier.height(32.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
-                    ) {
-                        Icon(Icons.Default.Refresh, contentDescription = null, tint = AfsSurface, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Check", color = AfsSurface, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    }
+                Column {
+                    Text(
+                        text = "App Version",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = AfsTextPrimary
+                    )
+                    Text(
+                        text = "v$versionName \u2022 see the Updates screen to check for new releases",
+                        fontSize = 11.sp,
+                        color = AfsTextSecondary,
+                        fontFamily = FontFamily.Monospace
+                    )
                 }
             }
         }
