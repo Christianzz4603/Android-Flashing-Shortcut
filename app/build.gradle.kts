@@ -122,7 +122,10 @@ dependencies {
 
   // Real ADB wireless-debugging client (pair + connect). Pinned to the published tag: it does not
   // include autoConnect(), so this app discovers the target itself via NsdManager and calls connect().
-  implementation("com.github.MuntashirAkon:libadb-android:1.0.1")
+  // Its own old bcprov-jdk15on is excluded so it doesn't collide with the newer BouncyCastle below.
+  implementation("com.github.MuntashirAkon:libadb-android:1.0.1") {
+    exclude(group = "org.bouncycastle", module = "bcprov-jdk15on")
+  }
   // Generates the self-signed ADB identity certificate (sun.security.x509 is blocked by the JDK
   // module system at compile time, so BouncyCastle is used instead).
   implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
