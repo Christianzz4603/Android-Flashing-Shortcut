@@ -1,27 +1,27 @@
 package com.example.ui.theme
 
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-private val AfsDarkColorScheme = darkColorScheme(
+private val AfsLightColorScheme = lightColorScheme(
     primary = AfsCyan,
-    onPrimary = Color(0xFF002229),
+    onPrimary = Color(0xFFFFFFFF),
     primaryContainer = AfsCyanDark,
-    onPrimaryContainer = Color(0xFFB8F5FF),
+    onPrimaryContainer = Color(0xFF14336B),
     secondary = AfsAmber,
-    onSecondary = Color(0xFF332000),
+    onSecondary = Color(0xFFFFFFFF),
     secondaryContainer = AfsAmberDark,
-    onSecondaryContainer = Color(0xFFFFE082),
+    onSecondaryContainer = Color(0xFF4A2E00),
     tertiary = AfsGreen,
-    onTertiary = Color(0xFF003816),
+    onTertiary = Color(0xFFFFFFFF),
     tertiaryContainer = AfsGreenDark,
-    onTertiaryContainer = Color(0xFFB9F6CA),
+    onTertiaryContainer = Color(0xFF0B5A2E),
     error = AfsRed,
-    onError = Color(0xFF450A0A),
+    onError = Color(0xFFFFFFFF),
     errorContainer = AfsRedDark,
-    onErrorContainer = Color(0xFFFFCDD2),
+    onErrorContainer = Color(0xFF7A1410),
     background = AfsBackground,
     onBackground = AfsTextPrimary,
     surface = AfsSurface,
@@ -36,12 +36,12 @@ private val AfsDarkColorScheme = darkColorScheme(
 
 @Composable
 fun MyApplicationTheme(
-    darkTheme: Boolean = true, // Force dark utility style per design requirements
+    darkTheme: Boolean = false, // Simple, clean light utility style across every screen
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     MaterialTheme(
-        colorScheme = AfsDarkColorScheme,
+        colorScheme = AfsLightColorScheme,
         typography = Typography,
         content = content
     )
